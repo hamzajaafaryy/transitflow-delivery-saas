@@ -134,7 +134,7 @@ async function run(){
   const context=await browser.newContext({viewport:{width:1440,height:1000}});contexts.push(context);const rewritten=[];
   await context.route(proxyOrigin+'/**',async route=>{
    const req=route.request(),headers={...req.headers()};
-   if(headers.origin===proxyOrigin){rewritten.push({client:headers['x-transitflow-origin'],site:headers['sec-fetch-site']});headers.origin='http://localhost:3189';}
+   if(headers.origin===proxyOrigin){if(['POST','PUT','PATCH','DELETE'].includes(req.method()))rewritten.push({client:headers['x-transitflow-origin'],site:headers['sec-fetch-site']});headers.origin='http://localhost:3189';}
    const url=new URL(req.url()),response=await route.fetch({url:'http://127.0.0.1:3189'+url.pathname+url.search,headers});await route.fulfill({response});
   });
   const page=await context.newPage();currentPage=page;page.on('pageerror',error=>errors.push(String(error)));
