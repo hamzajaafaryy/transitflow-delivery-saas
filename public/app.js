@@ -14,7 +14,7 @@ const can=permission=>state.me?.permissions.includes('*')||state.me?.permissions
 let shipSearchTimer;
 let toastTimer;function toast(message,bad=false){const e=$('#toast');e.textContent=message;e.style.background=bad?'#b83e55':'#172945';e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),4500);}
 async function api(path,{method='GET',data,raw,contentType}={}){
- const options={method,credentials:'same-origin',headers:{'X-Requested-With':'delivery-ui'}};
+ const options={method,credentials:'same-origin',headers:{'X-Requested-With':'delivery-ui','X-TransitFlow-Origin':location.origin}};
  if(raw){options.body=raw;options.headers['Content-Type']=contentType||'application/octet-stream';}
  else if(data!==undefined){options.headers['Content-Type']='application/json';options.body=JSON.stringify(data);}
  const res=await fetch('/api'+path,options);

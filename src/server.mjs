@@ -14,7 +14,7 @@ import { logisticsRoute,reserveItems } from './logistics.mjs';
 import {workflowRoute} from './workflows.mjs';
 import {PERMISSIONS,ROLE_LABELS,ROLES,has,requirePermission,requireShipmentAccess,shipmentScope,agencyScoped,requireAgency} from './access.mjs';
 import {recordCodReceipt} from './delivery.mjs';
-import {publicBaseUrl} from './environment.mjs';
+import {publicBaseUrl,allowedBrowserOrigin} from './environment.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../public');
 const roles=PERMISSIONS;
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
@@ -23,7 +23,7 @@ const fail=(status,message)=>Object.assign(new Error(message),{status});
 const utf8=new TextDecoder('utf-8',{fatal:true});
 const mregex=(path,re)=>path.match(re);
 
-export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SESSION_SECRET||randomBytes(40).toString('hex'),secureCookies=process.env.COOKIE_SECURE==='true',sameOrigin=publicBaseUrl()}={}){
+export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SESSION_SECRET||randomBytes(40).toString('hex'),secureCookies=process.env.COOKIE_SECURE==='true',environment=process.env,sameOrigin=publicBaseUrl(environment)}={}){
  const loginAttempts=new Map();
  const stmt=(q,...args)=>db.prepare(q).get(...args);
  const all=(q,...args)=>db.prepare(q).all(...args);
@@ -46,7 +46,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   // Agency API credentials are separate from browser sessions.
   if(req.url.startsWith('/api/integrations/'))return;
   const actual=req.headers.origin;
-  if(actual){const expected=new URL(sameOrigin).origin;if(actual!==expected)throw fail(403,'Origine non autorisée');}
+  if(!allowedBrowserOrigin(req.headers,sameOrigin,environment)){console.warn('Browser origin rejected:',JSON.stringify({received:actual,expected:new URL(sameOrigin).origin,fetchSite:req.headers['sec-fetch-site']||null,clientOrigin:req.headers['x-transitflow-origin']||null}));throw fail(403,'Origine non autorisée');}
   if(req.headers['x-requested-with']!=='delivery-ui')throw fail(403,'En-tête anti-CSRF requis');
  }
  function createShipment(user,data){

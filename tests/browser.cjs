@@ -126,7 +126,23 @@ async function run(){
   if(role==='DRIVER')assert.ok(await smoke.page.locator('.nav [data-tab="cash"]').count());console.log(role+': '+tabs.length+' workspaces loaded');await smoke.context.close();
  }
  await p.page.setViewportSize({width:390,height:844});await go(p.page,'pickups');assert.ok(await p.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile page must not overflow');
+ // Model Codespaces forwarding while keeping the public browser URL and cookies.
+ const proxyEnv={CODESPACES:'true',CODESPACE_NAME:'transitflow-proxy-ci',GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:'app.github.dev',PORT:'3189'},proxyOrigin='https://transitflow-proxy-ci-3189.app.github.dev';
+ const proxyServer=buildServer({environment:proxyEnv,secureCookies:true,sessionSecret:'isolated-proxy-browser-test-secret-123456789'});
+ await new Promise(resolve=>proxyServer.server.listen(3189,'127.0.0.1',resolve));
+ try{
+  const context=await browser.newContext({viewport:{width:1440,height:1000}});contexts.push(context);const rewritten=[];
+  await context.route(proxyOrigin+'/**',async route=>{
+   const req=route.request(),headers={...req.headers()};
+   if(headers.origin===proxyOrigin){rewritten.push({client:headers['x-transitflow-origin'],site:headers['sec-fetch-site']});headers.origin='http://localhost:3189';}
+   const url=new URL(req.url()),response=await route.fetch({url:'http://127.0.0.1:3189'+url.pathname+url.search,headers});await route.fulfill({response});
+  });
+  const page=await context.newPage();currentPage=page;page.on('pageerror',error=>errors.push(String(error)));
+  await page.goto(proxyOrigin);await page.locator('#companyName').fill('Codespaces Proxy QA');await page.locator('#fullName').fill('Hamza Proxy');await page.locator('#email').fill('proxy@browser.ma');await page.locator('#password').fill(password);await page.locator('#auth-form button').click();
+  await page.getByRole('button',{name:'Se connecter →'}).waitFor();await page.locator('#email').fill('proxy@browser.ma');await page.locator('#password').fill(password);await page.locator('#auth-form button').click();await page.locator('.shell').waitFor();
+  assert.ok(rewritten.length>=2,'setup and login must pass through the rewriting proxy');assert.ok(rewritten.every(x=>x.client===proxyOrigin),'the independent browser origin must survive forwarding');assert.ok((await context.cookies(proxyOrigin)).some(cookie=>cookie.name==='dn_session'&&cookie.secure&&cookie.httpOnly));await save(page,'11-codespaces-proxy-login');await context.close();console.log('PASS: Codespaces rewritten Origin, real browser setup/login and secure session cookie');
+ }finally{await new Promise(resolve=>proxyServer.server.close(resolve));proxyServer.db.close();}
  assert.deepEqual(errors,[],'browser/server errors');
- writeFileSync(`${evidence}/result.json`,JSON.stringify({ok:true,roles:11,journey:['merchant orders','pickup','warehouse','city dispatch and XLSX','agency arrival','delivery/refusal','return QC','cash reconciliation','claims and privacy'],errors},null,2));console.log('PASS: complete UI → API → database journeys, 11 roles, mobile and desktop');
+ writeFileSync(`${evidence}/result.json`,JSON.stringify({ok:true,roles:11,journey:['merchant orders','pickup','warehouse','city dispatch and XLSX','agency arrival','delivery/refusal','return QC','cash reconciliation','claims and privacy','Codespaces rewritten Origin'],errors},null,2));console.log('PASS: complete UI → API → database journeys, 11 roles, mobile and desktop');
 }
 run().catch(async error=>{console.error(error);try{if(currentPage)await save(currentPage,'failure');}catch{}writeFileSync(`${evidence}/failure.txt`,String(error.stack||error)+'\n'+errors.join('\n'));process.exitCode=1;}).finally(async()=>{for(const c of contexts)await c.close().catch(()=>{});if(browser)await browser.close();if(server)await new Promise(r=>server.close(r));if(db)db.close();});

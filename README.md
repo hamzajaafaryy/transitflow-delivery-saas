@@ -76,7 +76,7 @@ npm start
 
 Ouvrir http://localhost:3000, configurer la société une fois, puis villes, marchands, comptes et stock. Définir PUBLIC_BASE_URL sur l’origine réelle ; derrière HTTPS, activer COOKIE_SECURE=true. Base : data/delivery.sqlite.
 
-Dans GitHub Codespaces, le serveur détecte le lien HTTPS du port à partir des variables de l’environnement Codespaces si PUBLIC_BASE_URL est vide ou conserve la valeur locale du fichier exemple. Le démarrage affiche `Browser origin` : c’est l’origine exacte autorisée pour les formulaires et les tickets. Une URL publique explicitement configurée reste prioritaire. Aucun en-tête Host/X-Forwarded-Host reçu du navigateur ne détermine cette autorisation.
+Dans GitHub Codespaces, le serveur détecte le lien HTTPS du port à partir des variables de l’environnement Codespaces si PUBLIC_BASE_URL est vide ou conserve la valeur locale du fichier exemple. Le démarrage affiche `Browser origin` : c’est l’origine exacte autorisée pour les formulaires et les tickets. Une URL publique explicitement configurée reste prioritaire. Aucun en-tête Host/X-Forwarded-Host reçu du navigateur ne détermine cette autorisation. Le proxy Codespaces peut réécrire Origin vers localhost : cette variante est acceptée uniquement pour le Codespace et le port courants, avec X-TransitFlow-Origin égal à l’origine publique, l’en-tête anti-CSRF habituel et aucune métadonnée Fetch indiquant un autre site. Aucun joker CORS ni acceptation générale de localhost n’est ajouté. Une origine refusée est journalisée sans données de connexion.
 
 Si un serveur déjà démarré répond « Origine non autorisée », l’arrêter avec Ctrl+C puis le relancer avec l’origine exacte copiée depuis la barre d’adresse de l’application, sans chemin ni paramètres :
 

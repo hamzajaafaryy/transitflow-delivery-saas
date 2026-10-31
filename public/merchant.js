@@ -15,7 +15,7 @@ const tag=(label,t='')=>`<span class="pill ${esc(t)}">${esc(label)}</span>`;
 let toaster;
 function toast(message,error=false){const el=q('#toast');el.textContent=message;el.style.background=error?'#b43a52':'#142845';el.classList.add('show');clearTimeout(toaster);toaster=setTimeout(()=>el.classList.remove('show'),4200);}
 async function api(path,options={}){
- const cfg={method:options.method||'GET',credentials:'same-origin',headers:{'X-Requested-With':'delivery-ui'}};
+ const cfg={method:options.method||'GET',credentials:'same-origin',headers:{'X-Requested-With':'delivery-ui','X-TransitFlow-Origin':location.origin}};
  if(options.data!==undefined){cfg.headers['Content-Type']='application/json';cfg.body=JSON.stringify(options.data);}
  const r=await fetch('/api'+path,cfg);let value;
  try{value=await r.json();}catch{throw Error('Réponse du serveur illisible');}
