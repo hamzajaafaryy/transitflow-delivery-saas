@@ -112,6 +112,33 @@ CREATE TABLE IF NOT EXISTS imports (
   if (!db.prepare('PRAGMA table_info(shipments)').all().some(x=>x.name==='pending_partner_update')) {
     db.exec('ALTER TABLE shipments ADD COLUMN pending_partner_update INTEGER NOT NULL DEFAULT 0');
   }
+  // Merchant tariffs and reconciled statements are immutable snapshots once created.
+  db.exec(`
+CREATE TABLE IF NOT EXISTS merchant_rate_cards (
+ id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES companies(id),
+ merchant_id TEXT NOT NULL REFERENCES merchants(id), city_key TEXT NOT NULL,
+ fee_centimes INTEGER NOT NULL CHECK(fee_centimes>=0), updated_at TEXT NOT NULL,
+ UNIQUE(tenant_id,merchant_id,city_key)
+);
+CREATE TABLE IF NOT EXISTS merchant_statements (
+ id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES companies(id),
+ merchant_id TEXT NOT NULL REFERENCES merchants(id),reference TEXT NOT NULL,
+ service_date TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('DRAFT','APPROVED','PAID')),
+ shipment_count INTEGER NOT NULL,gross_centimes INTEGER NOT NULL,fee_centimes INTEGER NOT NULL,
+ net_centimes INTEGER NOT NULL,created_at TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),
+ confirmed_at TEXT,paid_at TEXT,payment_reference TEXT,
+ UNIQUE(tenant_id,merchant_id,service_date), UNIQUE(tenant_id,reference)
+);
+CREATE TABLE IF NOT EXISTS merchant_statement_lines (
+ id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES companies(id),
+ statement_id TEXT NOT NULL REFERENCES merchant_statements(id),
+ shipment_id TEXT NOT NULL REFERENCES shipments(id),tracking TEXT NOT NULL,
+ city TEXT NOT NULL,delivered_at TEXT NOT NULL,cod_centimes INTEGER NOT NULL,
+ fee_centimes INTEGER NOT NULL,net_centimes INTEGER NOT NULL,
+ UNIQUE(tenant_id,shipment_id)
+);
+CREATE INDEX IF NOT EXISTS merchant_statements_lookup ON merchant_statements(tenant_id,merchant_id,service_date);
+  `);
   return db;
 }
 export const now = () => new Date().toISOString();

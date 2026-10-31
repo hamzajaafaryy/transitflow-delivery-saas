@@ -13,7 +13,7 @@ Une base de projet en français, multi-sociétés (tenants) pour la livraison au
 - Import **CSV et XLSX**, avec validation, prévention des doublons, rapport des erreurs. Export Excel XLSX avec manifest enregistré, pour envoi **manuel** via WhatsApp à un partenaire.
 - Scan externe : endpoint API authentifié ; les événements `RAMASSE`, `EN_COURS`, `EN_LIVRAISON`, `LIVRE`, etc. actualisent automatiquement le colis **si le système externe les envoie**. Idempotence via `eventId` ; rejet des transitions régressives.
 - Espace livreur mobile dans le même site (liste des colis qui lui sont attribués, téléphone, mise à jour de statuts).
-- Espace marchand basé sur le `merchant_id` explicite : tableau de bord marchand, consultations limitées à ses commandes et **création de nouvelles commandes** automatiquement rattachées au marchand authentifié (sans permission de choisir un partenaire ou livreur).
+- Espace marchand basé sur le `merchant_id` explicite. Consultations limitées aux colis de ce marchand.
 - Suivi public par numéro de tracking à forte entropie (sans téléphone, adresse complète ou COD) ; masquer le suivi si même tracking présent chez plusieurs tenants.
 - Stock / fulfillment : création SKU, réception de lots, quantités disponibles/réservées, réservation FIFO transactionnelle et sortie du stock après préparation.
 - Finance initiale : collecte COD confirmée manuellement sur une commande `DELIVERED`, entrée de journal non duplicable. **Pas encore de règlement ou rapprochement complet**.
@@ -105,6 +105,16 @@ MIT-licensed Kazuhiko Arase implementation under `src/vendor/qrcode/` with its
 licence notice. New server integration tests cover tenant isolation for labels,
 HTML escaping, role permissions, price edits, and partner update flags.
 
-## Espace marchand — update v0.3
+## Espace marchand enrichi — v0.4 (Livraisons 24h, relevés, stock détaillé)
 
-Company admin creates a merchant (`Marchands`), then a login user (`Utilisateurs`, role MERCHANT, attached to that merchant). The merchant logs in through the same company code + email + password form, sees a merchant dashboard and creates orders using **Nouvelle commande**. The server sets the `merchant_id` from the authenticated session rather than trusting the form, and refuses a merchant-supplied partner/driver assignment or foreign merchant ID. A merchant can view only orders associated with their merchant account. Run `npm test` for the access-control regression suite. Static Vercel UI preview is separate, fictional, and does not write into this server.
+- Ouvrir `/merchant.html` après connexion avec un compte marchand. Le comptable peut accéder au même écran pour consulter un marchand, configurer des tarifs et préparer un relevé.
+- Rapport `Hier`, `24 heures`, `Aujourd'hui` ou date précise en fuseau **Africa/Casablanca** : colis livrés, COD déclaré, collecte confirmée, montant restant à collecter. Un statut « Livré » **ne prouve pas** le versement au marchand.
+- Tarification par marchand et ville (ou `*` pour un tarif par défaut), en centimes MAD. Aucun montant net n'est inventé si le tarif manque.
+- Relevés journaliers **brouillon → validé → marqué versé**. Les lignes sont une photographie immuable des colis livrés, COD encaissés et frais appliqués; un colis ne peut apparaître que dans un seul relevé. L'impression « Enregistrer en PDF » utilise le navigateur. **Un relevé ne constitue pas une facture fiscale, ni une preuve de virement bancaire.**
+- Inventaire marchand par SKU : quantité physique, quantité réservée, disponible, répartition par dépôt/emplacement, lots FIFO, allocations. Le marchand n'accède qu'à ses propres produits. Les SKU doivent être associés à son `merchant_id` lors de leur création; l'administrateur peut attribuer les anciens SKU non associés après vérification.
+- Le marchand peut créer une commande et réserver facultativement un SKU en FIFO dans la même transaction. Si le stock est insuffisant, la création de commande est annulée.
+- Tests : isolation des marchands, quantités FIFO, refus des sur-réservations, collecte COD, relevés et versements étape par étape.
+
+API : `GET /api/merchant/overview?period=yesterday|today|24h|date&date=AAAA-MM-JJ`, `GET /api/merchant/stock`, `GET /api/merchant/statements`, `POST /api/merchant/orders`, `GET /api/finance/merchant-list`, `POST /api/finance/merchant-rates`, `POST /api/finance/merchant-statements`, `POST /api/finance/merchant-statements/:id/confirm`, `POST .../:id/mark-paid`. L'API comptable est limitée à ADMIN/FINANCE. Voir les validations dans le code.
+
+**Limites MVP** : pas de virements automatiques, contrôle bancaire, factures fiscales ou rapprochement intercompagnies complet. Avant utilisation réelle des fonds COD, prévoir les contrôles comptables, une base PostgreSQL multi-tenant, des sauvegardes et une validation fiscale/juridique.

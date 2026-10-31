@@ -9,6 +9,7 @@ import { hashPassword, verifyPassword, signToken, verifyToken, makeKey, hashKey 
 import { STATUSES, STATUS_LABELS, canTransition, canPartnerTransition, mapPartnerStatus, validTracking, centimes } from './domain.mjs';
 import { xlsx, orderColumns, parseCsv, rowsToOrders } from './excel.mjs';
 import { ticketHtml, publicTrackingHtml } from './ticket.mjs';
+import { merchantRoute } from './merchant-portal.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../public');
 const roles={ADMIN:['*'],OPERATIONS:['shipments','partners','imports','export','users.read'],DRIVER:['driver'],MERCHANT:['merchant','shipments.create'],FINANCE:['shipments.read','finance']};
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
@@ -127,7 +128,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     });return send(res,200,result);
    }
    if(method==='GET'&&!path.startsWith('/api/')){
-    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/styles.css':'styles.css','/manifest.webmanifest':'manifest.webmanifest'};
+    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/styles.css':'styles.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
     const filename=assets[path];if(!filename)throw fail(404,'Page introuvable');
     const data=readFileSync(resolve(root,filename));res.writeHead(200,{'Content-Type':mime[extname(filename)]||'application/manifest+json','Cache-Control':'no-store'});return res.end(data);
    }
@@ -155,6 +156,9 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    if(method==='POST'&&path==='/api/auth/logout')return send(res,200,{ok:true},{'Set-Cookie':`dn_session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0${secureCookies?'; Secure':''}`});
    const user=requireSession(req);
    const tenant=user.tenant_id;
+   if(path.startsWith('/api/merchant/')||path.startsWith('/api/finance/merchant-')){
+    return await merchantRoute({path,method,url,req,res,user,tenant,stmt,all,run,tx,audit,send,json,createShipment});
+   }
    if(method==='GET'&&path==='/api/me'){
     const company=stmt('SELECT slug,name,plan FROM companies WHERE id=?',tenant);
     return send(res,200,{user,company,permissions:roles[user.role],statusLabels:STATUS_LABELS});
@@ -382,10 +386,11 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     return send(res,200,{products:products.map(p=>({...p,available:p.on_hand-p.reserved}))});
    }
    if(method==='POST'&&path==='/api/inventory/products'){
-    permit(user,'shipments');const data=await json(req),sku=sanitize(data.sku,70).toUpperCase(),name=sanitize(data.name,160);
+    permit(user,'shipments');const data=await json(req),sku=sanitize(data.sku,70).toUpperCase(),name=sanitize(data.name,160),merchantId=data.merchantId||null;
+    if(merchantId&&!stmt('SELECT 1 FROM merchants WHERE id=? AND tenant_id=?',merchantId,tenant))throw fail(400,'Marchand invalide');
     if(!/^[A-Z0-9_-]{2,70}$/.test(sku)||!name)throw fail(400,'SKU et nom requis');
     const productId=id();
-    try{run('INSERT INTO inventory_products VALUES(?,?,?,?,?,?)',productId,tenant,sku,name,null,now());}
+    try{run('INSERT INTO inventory_products VALUES(?,?,?,?,?,?)',productId,tenant,sku,name,merchantId,now());}
     catch(e){if(String(e).includes('UNIQUE'))throw fail(409,'SKU déjà utilisé');throw e;}
     audit(tenant,user.id,'PRODUCT_CREATED','product',productId,{sku});return send(res,201,{id:productId});
    }
@@ -402,7 +407,10 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     const shipment=stmt('SELECT id,status FROM shipments WHERE id=? AND tenant_id=?',shipId,tenant);
     if(!shipment)throw fail(404,'Colis introuvable');
     if(!['CREATED','ASSIGNED_PARTNER','EXPORTED'].includes(shipment.status))throw fail(409,'Colis clôturé');
-    if(!stmt('SELECT 1 FROM inventory_products WHERE id=? AND tenant_id=?',productId,tenant))throw fail(404,'Produit introuvable');
+    const stockProduct=stmt('SELECT merchant_id FROM inventory_products WHERE id=? AND tenant_id=?',productId,tenant);
+    if(!stockProduct)throw fail(404,'Produit introuvable');
+    const targetMerchant=stmt('SELECT merchant_id FROM shipments WHERE id=? AND tenant_id=?',shipId,tenant);
+    if(stockProduct.merchant_id&&targetMerchant?.merchant_id!==stockProduct.merchant_id)throw fail(403,'Stock associé à un autre marchand');
     const allocated=tx(()=>{
       const lots=all('SELECT id,quantity_on_hand,quantity_reserved FROM stock_lots WHERE tenant_id=? AND product_id=? AND quantity_on_hand>quantity_reserved ORDER BY received_at,id',tenant,productId);
       if(lots.reduce((sum,l)=>sum+l.quantity_on_hand-l.quantity_reserved,0)<qty)throw fail(409,'Stock insuffisant');
