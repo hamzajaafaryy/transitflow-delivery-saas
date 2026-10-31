@@ -64,7 +64,7 @@ export async function logisticsRoute(ctx){
  const {path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json}=ctx;
  if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all('SELECT city FROM agencies WHERE company_id=? ORDER BY city',companyId).map(x=>x.city)});
  operations(user);
- if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all('SELECT id,name,city,kind,operator_name,contact,fee_centimes,created_at FROM agencies WHERE company_id=?'+(agencyScoped(user)?' AND id=?':'')+' ORDER BY city',...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
+ if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all("SELECT a.id,a.name,a.city,a.kind,a.operator_name,a.contact,a.fee_centimes,a.created_at,(SELECT COUNT(*) FROM shipments s WHERE s.company_id=a.company_id AND s.agency_id=a.id AND s.status='PICKED_UP' AND s.ramassed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dispatch_items i WHERE i.company_id=s.company_id AND i.shipment_id=s.id)) AS ready_count FROM agencies a WHERE a.company_id=?"+(agencyScoped(user)?' AND a.id=?':'')+' ORDER BY a.city',...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
  if(method==='POST'&&path==='/api/agencies'){
   admin(user);const data=await json(req),name=clean(data.name,120),city=clean(data.city,90),kind=data.kind||'PARTNER',fee=centimes(data.fee??0);
   if(!name||city.length<2||!['INTERNAL','PARTNER'].includes(kind))throw bad(400,'Nom, ville et type d’agence requis');

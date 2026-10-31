@@ -26,3 +26,13 @@ test('control tower destinations, recent shipments and activity remain scoped to
   const admin=(await t.request('/api/workflow/overview')).value;assert.equal(admin.cityDistribution.reduce((n,x)=>n+x.total,0),2);assert.equal(admin.recentShipments.length,2);
  }finally{await t.stop();}
 });
+
+test('dispatch readiness counts reflect reserving and cancelling a city container',async()=>{
+ const t=await start();try{
+  const order=(await t.order()).value;await t.pickup(order.tracking);
+  const ready=async()=>((await t.request('/api/agencies')).value.agencies.find(a=>a.id===t.agencies.Tanger.id)).ready_count;
+  assert.equal(await ready(),1);
+  const d=await t.request('/api/dispatches',{method:'POST',data:{agencyId:t.agencies.Tanger.id}});assert.equal(d.status,201);assert.equal(await ready(),0);
+  await t.request('/api/dispatches/'+d.value.dispatch.id+'/cancel',{method:'POST',data:{reason:'Reconstitution du lot test'}});assert.equal(await ready(),1);
+ }finally{await t.stop();}
+});

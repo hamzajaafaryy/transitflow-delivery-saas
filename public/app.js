@@ -9,7 +9,7 @@ const money=n=>new Intl.NumberFormat('fr-MA',{style:'currency',currency:'MAD'}).
 const date=s=>s?new Intl.DateTimeFormat('fr-FR',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Casablanca'}).format(new Date(s)):'—';
 const status=s=>`<span class="pill ${esc(s)}">${esc(state.me?.statusLabels?.[s]||s)}</span>`;
 const icon={dashboard:'◫',shipments:'▣',agencies:'↔',imports:'⇪',merchants:'♧',inventory:'▥',operations:'⌁',dispatches:'▤',users:'♙',finance:'¤',tracking:'⌕',driver:'▦'};
-const tabs={dashboard:'Tableau de bord',shipments:'Colis',agencies:'Agences & hubs',imports:'Import Excel',merchants:'Marchands',inventory:'Stock & Fulfillment',operations:'Préparation & ramassage',dispatches:'Envois par ville',users:'Utilisateurs',finance:'COD & Finance',tracking:'Suivi public',driver:'Mes livraisons'};
+const tabs={dashboard:'Tableau de bord',shipments:'Colis',agencies:'Agences & hubs',imports:'Import Excel',merchants:'Marchands',inventory:'Stock & Fulfillment',operations:'Réception & préparation',dispatches:'Envois par ville',users:'Utilisateurs',finance:'COD & Finance',tracking:'Suivi public',driver:'Mes livraisons'};
 Object.assign(tabs,workflowNames);for(const tab of Object.keys(workflowNames))icon[tab]=({pickups:'↥',returns:'↶',claims:'☷',arrivals:'⇣',routes:'⌘',cash:'¤',vehicles:'▰',adjustments:'±',notifications:'◉',settings:'⚙',audit:'≡'})[tab];
 const can=permission=>state.me?.permissions.includes('*')||state.me?.permissions.includes(permission);
 let shipSearchTimer,refreshSerial=0;
@@ -226,7 +226,7 @@ function wire(){
  $('#tracking-form')?.addEventListener('submit',async e=>{e.preventDefault();const id=e.target.elements.tracking.value;const div=$('#tracking-results');try{const res=await api(`/tracking/${encodeURIComponent(id)}`);div.innerHTML=`<div class="divider"></div><div class="headline"><strong class="code">${esc(res.tracking)}</strong><span class="pill ${esc(res.status)}">${esc(res.statusLabel)}</span></div><p>Ville: <strong>${esc(res.city)}</strong> · Actualisé: ${date(res.updatedAt)}</p><div class="timeline">${res.events.map(ev=>`<div class="event"><strong>${esc(state.me?.statusLabels?.[ev.status]||ev.status)}</strong><small>${date(ev.created_at)}</small></div>`).join('')}</div>`;}catch(err){div.innerHTML=`<p class="error">${esc(err.message)}</p>`;}});
 }
 configureWorkflows({state,api,esc,money,date,status,field,formData,modal,toast,refresh,heading,render,navigate,availableTabs});
-configureOperations({state,api,esc,money,date,status,field,formData,modal,toast,refresh,heading});
+configureOperations({state,api,esc,money,date,status,field,formData,modal,toast,refresh,heading,render});
 window.addEventListener('popstate',()=>{if(state.me)load();});
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.body.classList.contains('menu-open')){$('#nav')?.classList.remove('open');document.body.classList.remove('menu-open');$('.mobile-menu')?.focus();}});
 load();

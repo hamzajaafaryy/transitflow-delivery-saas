@@ -97,11 +97,11 @@ async function run(){
  await save(w.page,'03-warehouse');
 
  // Physical city container, XLSX and departure are separate operations.
- await go(a.page,'dispatches');await click(a.page,`[data-action="new-container"][data-id="${tanger.id}"]`);await a.page.locator('#container-scan').waitFor();const dispatch=db.prepare('SELECT * FROM dispatches').get();
- for(const tracking of tracks){await scan(a.page,'#container-scan',tracking);await a.page.locator('#container-scan button:not([disabled])').waitFor();await eventually(()=>db.prepare('SELECT scanned_at FROM dispatch_items WHERE shipment_id=?').get(shipment(tracking).id)?.scanned_at,v=>Boolean(v),'container scan');}
- await click(a.page,'[data-action="close-container"]');await a.page.locator('[data-action="export-container"]').waitFor();
- const downloadPromise=a.page.waitForEvent('download');await click(a.page,'[data-action="export-container"]');const download=await downloadPromise;assert.match(download.suggestedFilename(),/\.xlsx$/);await download.saveAs(`${evidence}/envoi-tanger.xlsx`);
- await click(a.page,'[data-action="ship-container"]');await eventually(()=>state('dispatches',dispatch.id),'SHIPPED','physical departure');
+ const dispatcher=await session(people.DISPATCHER.email,'dispatches');await click(dispatcher.page,`[data-action="new-container"][data-id="${tanger.id}"]`);await dispatcher.page.locator('#container-scan').waitFor();const dispatch=db.prepare('SELECT * FROM dispatches').get();
+ for(const tracking of tracks){await scan(dispatcher.page,'#container-scan',tracking);await dispatcher.page.locator('#container-scan button:not([disabled])').waitFor();await eventually(()=>db.prepare('SELECT scanned_at FROM dispatch_items WHERE shipment_id=?').get(shipment(tracking).id)?.scanned_at,v=>Boolean(v),'container scan');}
+ await click(dispatcher.page,'[data-action="close-container"]');await dispatcher.page.locator('[data-action="export-container"]').waitFor();
+ const downloadPromise=dispatcher.page.waitForEvent('download');await click(dispatcher.page,'[data-action="export-container"]');const download=await downloadPromise;assert.match(download.suggestedFilename(),/\.xlsx$/);await download.saveAs(`${evidence}/envoi-tanger.xlsx`);
+ await click(dispatcher.page,'[data-action="ship-container"]');await eventually(()=>state('dispatches',dispatch.id),'SHIPPED','physical departure');
  const agency=await session(people.AGENCY_AGENT.email,'arrivals');await open(agency.page,'arrivals',dispatch.id);
  for(const tracking of tracks){await scan(agency.page,'[data-workflow-scan="arrivals"]',tracking);await eventually(()=>shipment(tracking).status,'AT_AGENCY','agency reception');await agency.page.locator('[data-workflow-scan="arrivals"] button:not([disabled])').waitFor();}
  await save(agency.page,'04-agency-arrival');
