@@ -8,7 +8,7 @@ export async function workflowForm({c,call,has,label,table,esc},action,kind,id){
  const agencies=(boot.agencies||[]).map(a=>({value:a.id,label:a.city+' · '+a.name}));
  const modal=(title,fields,submit,onReady)=>{
   const m=c.modal(title,`<form class="form workflow-form">${fields}<button class="btn" type="submit">Enregistrer</button></form>`),form=m.querySelector('form');
-  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('button[type="submit"]');button.disabled=true;try{const result=await submit(Object.fromEntries(new FormData(form)),form);m.remove();if(result?.kind){state.tab=result.kind;state.workflowDetail={kind:result.kind,id:result.id};}c.toast('Opération enregistrée');await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}};
+  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('button[type="submit"]');button.disabled=true;try{const result=await submit(Object.fromEntries(new FormData(form)),form);m.remove();c.toast('Opération enregistrée');if(result?.kind)await c.navigate(result.kind,{detail:{kind:result.kind,id:result.id}});else await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}};
   if(onReady)Promise.resolve(onReady(form,m)).catch(e=>c.toast(e.message,true));return {m,form};
  };
  const resolveParcel=async tracking=>{const value=String(tracking||'').trim();if(/^[a-f0-9-]{36}$/i.test(value))return (await c.api('/shipments/'+value)).shipment;const rows=(await c.api('/shipments?q='+encodeURIComponent(value)+'&limit=50')).shipments,s=rows.find(x=>x.tracking.toUpperCase()===value.toUpperCase());if(!s)throw Error('Tracking introuvable dans votre compte');return s;};

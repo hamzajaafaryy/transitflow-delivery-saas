@@ -1,6 +1,6 @@
 /* Real browser → API → SQLite journeys. Playwright is a CI-only dependency. */
 const assert=require('node:assert/strict');
-const {mkdirSync,writeFileSync}=require('node:fs');
+const {mkdirSync,writeFileSync,readFileSync}=require('node:fs');
 const {chromium}=require('playwright');
 const password='browser-journey-password-2026';
 const evidence='browser-evidence';
@@ -69,16 +69,25 @@ async function run(){
   await m.page.locator('[data-action="new-shipment"]').first().click();await choose(m.page,{source,city:'Tanger'});
   await fill(m.page,{recipient:source+' Client',phone:'0612345678',address:'Rue Test 12',cod:200,description:'Commande '+source});
   if(source==='STOCK'){await choose(m.page,{productId:product.id});await fill(m.page,{quantity:2});await click(m.page,'[data-add-stock-line]');const second=m.page.getByRole('dialog').locator('[data-stock-line]').nth(1);await second.locator('[name="productId"]').selectOption(product2.id);await second.locator('[name="quantity"]').fill('1');}
-  await submit(m.page);await eventually(()=>db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source)?.tracking,v=>Boolean(v),'created '+source);tracks.push(db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source).tracking);
+  if(source==='STOCK')await save(m.page,'14-order-form');await submit(m.page);await eventually(()=>db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source)?.tracking,v=>Boolean(v),'created '+source);tracks.push(db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source).tracking);
  }
  const [external,stock]=tracks;assert.equal(db.prepare("SELECT SUM(quantity) n FROM stock_allocations WHERE state='RESERVED'").get().n,3);
+ // Professional workspace: real filters, global search, selection and a scoped export.
+ await m.page.locator('#ship-source').selectOption('STOCK');await eventually(()=>m.page.locator('.shipments-table tbody tr').count(),1,'source filter');assert.ok((await m.page.locator('.shipments-table').innerText()).includes(stock));
+ await m.page.locator('#global-search input').fill(external);await m.page.locator('#global-search input').press('Enter');await eventually(()=>m.page.locator('.shipments-table tbody tr').count(),1,'global tracking search');await eventually(()=>m.page.locator('#ship-source').inputValue(),'','global search resets filters');await m.page.locator('#ship-select-all').check();
+ const csvDownload=m.page.waitForEvent('download');await click(m.page,'[data-action="ship-export"]');const csv=await csvDownload;await csv.saveAs(`${evidence}/selected-colis.csv`);const exported=readFileSync(`${evidence}/selected-colis.csv`,'utf8');assert.ok(exported.includes(external));assert.ok(!exported.includes(stock));
+ await save(m.page,'12-shipment-workspace');await click(m.page,'[data-action="ship-reset"]');await eventually(()=>m.page.locator('.shipments-table tbody tr').count(),2,'reset filters');
+ await go(m.page,'dashboard');await m.page.locator('.dashboard-heading').waitFor();await save(m.page,'13-merchant-dashboard');
+
+ await go(m.page,'shipments');await m.page.locator('[data-action="history"]').first().click();await m.page.getByRole('dialog').waitFor();await m.page.keyboard.press('Escape');await m.page.getByRole('dialog').waitFor({state:'detached'});
  await go(m.page,'pickups');await click(m.page,'[data-action="wf-point"]');await fill(m.page,{label:'Boutique Casa',contactName:'Marchand',phone:'0612345678',city:'Casablanca',address:'Rue Marchand 5'});await submit(m.page);
  await click(m.page,'[data-action="wf-new"][data-kind="pickups"]');await m.page.getByRole('dialog').locator('input[name="shipmentIds"]').check();await submit(m.page);
  const pickup=db.prepare('SELECT * FROM pickups').get();await eventually(()=>m.page.locator('[data-action="wf-back"]').count(),1,'pickup detail');await save(m.page,'01-merchant-pickup');
  await go(m.page,'claims');await click(m.page,'[data-action="wf-new"][data-kind="claims"]');await fill(m.page,{tracking:external,subject:'Suivi de mon colis',message:'Merci de confirmer le passage du ramasseur'});await submit(m.page);
- const claim=db.prepare('SELECT * FROM claims').get();await m.page.locator('#claim-file').setInputFiles({name:'preuve.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\nTest\n%%EOF')});await m.page.locator('#claim-upload button').click();await eventually(()=>db.prepare('SELECT COUNT(*) n FROM claim_attachments').get().n,1,'private attachment');
+ const claim=db.prepare('SELECT * FROM claims').get();assert.ok(m.page.url().includes('id='+claim.id));await m.page.reload();await m.page.locator('#claim-file').waitFor();await m.page.locator('#claim-file').setInputFiles({name:'preuve.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\nTest\n%%EOF')});await m.page.locator('#claim-upload button').click();await eventually(()=>db.prepare('SELECT COUNT(*) n FROM claim_attachments').get().n,1,'private attachment');
 
  // Dispatcher assigns the personal vehicle. Pickup driver confirms collection only.
+ const adminHome=await session('admin@browser.ma','dashboard');await save(adminHome.page,'15-operations-dashboard');
  const a=await session('admin@browser.ma','pickups');await open(a.page,'pickups',pickup.id);await click(a.page,'[data-action="wf-assign"]');await choose(a.page,{driverId:people.PICKUP_DRIVER.id});await choose(a.page,{vehicleId:vehicle.id});await submit(a.page);
  const p=await session(people.PICKUP_DRIVER.email,'pickups',true);await open(p.page,'pickups',pickup.id);await click(p.page,'[data-kind="pickups/start"]');await p.page.locator('[data-workflow-scan="pickups"]').waitFor();await scan(p.page,'[data-workflow-scan="pickups"]',external);
  await eventually(()=>shipment(external).status,'COLLECTED','merchant collection');await click(p.page,'[data-action="wf-complete-pickup"]');await fill(p.page,{receiverName:'Marchand Atlas'});await submit(p.page);await save(p.page,'02-pickup-driver-mobile');
@@ -125,6 +134,7 @@ async function run(){
   for(const tab of tabs){await go(smoke.page,tab);assert.equal(await smoke.page.locator('#auth-form').count(),0,role+' '+tab);assert.ok((await smoke.page.locator('main.content').innerText()).length>0,role+' '+tab);}
   if(role==='DRIVER')assert.ok(await smoke.page.locator('.nav [data-tab="cash"]').count());console.log(role+': '+tabs.length+' workspaces loaded');await smoke.context.close();
  }
+ await p.page.setViewportSize({width:390,height:844});await go(p.page,'dashboard');await save(p.page,'16-mobile-dashboard');assert.ok(await p.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile dashboard must not overflow');
  await p.page.setViewportSize({width:390,height:844});await go(p.page,'pickups');assert.ok(await p.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile page must not overflow');
  // Model Codespaces forwarding while keeping the public browser URL and cookies.
  const proxyEnv={CODESPACES:'true',CODESPACE_NAME:'transitflow-proxy-ci',GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:'app.github.dev',PORT:'3189'},proxyOrigin='https://transitflow-proxy-ci-3189.app.github.dev';

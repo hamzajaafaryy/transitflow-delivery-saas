@@ -1,6 +1,6 @@
 # TransitFlow — exploitation d’une société de livraison au Maroc
 
-Version 0.6 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
+Version 0.7 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
 
 ## Périmètre livré
 
@@ -14,6 +14,13 @@ Version 0.6 : une société, ses clients marchands, son warehouse et son réseau
 - Notifications internes, audit, désactivation des comptes et révocation serveur des sessions.
 
 Le [cadrage métier et les sources marocaines](docs/OPERATIONS_MAROC.md) distingue les pratiques publiées et les choix propres à TransitFlow. Voir aussi l’[API](docs/API.md).
+
+
+## Espace de travail v0.7
+
+Navigation regroupée par exploitation, relation client, finance et ressources ; tableau de bord adapté au rôle avec priorités réelles, répartition des colis, principales villes et derniers mouvements. La liste colis propose recherche tracking/nom/téléphone/ID/marchand, filtres ville/statut/source/marchand, tri, pagination et export CSV des lignes sélectionnées. Les comptes conservent leurs périmètres côté serveur.
+
+Les dossiers ramassage/retour/tournée/réclamation affichent leur progression et se rouvrent depuis leur URL. Les listes disposent de recherche, filtre d’état et pagination sur les éléments chargés. La création d’une commande est organisée par origine, destinataire et encaissement ; les erreurs restent visibles dans le formulaire. Les fenêtres prennent en charge Échap et la navigation clavier. L’interface mobile dispose d’une navigation dédiée, de cartes colis et de champs de saisie adaptés ; le portail stock/règlements partage la même présentation.
 
 ## Comptes et périmètres
 

@@ -99,7 +99,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   try{
-   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.6.0'});
+   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.7.0'});
    if(method==='GET'&&path==='/api/auth/setup'){const company=stmt('SELECT name FROM company WHERE singleton=1');return send(res,200,{setupRequired:!company,companyName:company?.name||null});}
    if(method==='GET'&&mregex(path,/^\/api\/tracking\/([a-zA-Z0-9_-]{4,64})$/)){
     const tracking=decodeURIComponent(path.split('/').at(-1));
@@ -153,7 +153,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     });return send(res,200,result);
    }
    if(method==='GET'&&!path.startsWith('/api/')){
-    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/styles.css':'styles.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
+    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/ui.js':'ui.js','/styles.css':'styles.css','/workspace.css':'workspace.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
     const filename=assets[path];if(!filename)throw fail(404,'Page introuvable');
     const data=readFileSync(resolve(root,filename));res.writeHead(200,{'Content-Type':mime[extname(filename)]||'application/manifest+json','Cache-Control':'no-store'});return res.end(data);
    }
@@ -205,7 +205,10 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     const status=sanitize(url.searchParams.get('status'),30),search=sanitize(url.searchParams.get('q'),100);
     const scoped=shipmentScope(user,'s'),filter=[companyId,...scoped.args],where=['s.company_id=?'+scoped.clause];
     if(status){where.push('s.status=?');filter.push(status);}
-    if(search){where.push('(s.tracking LIKE ? OR s.recipient LIKE ? OR s.city LIKE ?)');filter.push(`%${search}%`,`%${search}%`,`%${search}%`);}
+    if(search){where.push('(s.tracking LIKE ? OR s.recipient LIKE ? OR s.city LIKE ? OR s.phone LIKE ? OR s.id=? OR EXISTS(SELECT 1 FROM merchants mx WHERE mx.id=s.merchant_id AND mx.company_id=s.company_id AND mx.name LIKE ?))');filter.push(`%${search}%`,`%${search}%`,`%${search}%`,`%${search}%`,search,`%${search}%`);}
+    const city=sanitize(url.searchParams.get('city'),90),source=sanitize(url.searchParams.get('source'),20),merchantId=sanitize(url.searchParams.get('merchantId'),40);
+    if(city){where.push('s.city=? COLLATE NOCASE');filter.push(city);}if(source){if(!['EXTERNAL','STOCK'].includes(source))throw fail(400,'Origine de commande invalide');where.push('s.order_source=?');filter.push(source);}if(merchantId){where.push('s.merchant_id=?');filter.push(merchantId);}
+    const sort={newest:'s.created_at DESC,s.id DESC',oldest:'s.created_at ASC,s.id ASC',cod_desc:'s.cod_centimes DESC,s.created_at DESC'}[url.searchParams.get('sort')||'newest'];if(!sort)throw fail(400,'Tri non reconnu');
     const limit=Math.min(300,Math.max(1,Number(url.searchParams.get('limit'))||100)),offset=Math.max(0,Number(url.searchParams.get('offset'))||0);
     const total=stmt(`SELECT COUNT(*) AS n FROM shipments s WHERE ${where.join(' AND ')}`,...filter).n;
     const records=all(`SELECT s.*,p.name AS agency_name,u.full_name AS driver_name,m.name AS merchant_name,
@@ -213,7 +216,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
      FROM shipments s LEFT JOIN agencies p ON p.id=s.agency_id AND p.company_id=s.company_id
      LEFT JOIN users u ON u.id=s.driver_id AND u.company_id=s.company_id
      LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id
-     WHERE ${where.join(' AND ')} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`,...filter,Math.floor(limit),Math.floor(offset));
+     WHERE ${where.join(' AND ')} ORDER BY ${sort} LIMIT ? OFFSET ?`,...filter,Math.floor(limit),Math.floor(offset));
     return send(res,200,{shipments:records,total,limit,offset});
    }
    if(method==='POST'&&path==='/api/shipments'){

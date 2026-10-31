@@ -1,3 +1,4 @@
+import {brand,icon as uiIcon} from './ui.js';
 import {stockLinesMarkup,readStockLines,wireStockLines} from './stock-lines.js';
 const root=document.getElementById('merchant-app');
 const DEMO=document.documentElement.dataset.demo==='true';
@@ -73,9 +74,9 @@ function render(){
  if(!state.me||!state.overview)return;
  const name=state.overview.merchant.name;
  const manager=state.me.user.role!=='MERCHANT';
- root.innerHTML=`<div class="portal"><aside class="sidebar" id="sidebar"><div class="brand"><span class="brand-mark">T</span> TransitFlow</div><div class="brand-note">ESPACE MARCHAND</div><div class="subnav">MENU PRINCIPAL</div>
- ${Object.entries(titles).map(([key,title])=>`<button class="navbtn ${state.section===key?'active':''}" data-section="${key}"><span class="ico">${icon[key]}</span><span class="grow">${title}</span>${key==='statements'?'<span class="tinybadge">COD</span>':''}</button>`).join('')}
- <div class="navuser"><strong>${esc(name)}</strong><span>${esc(state.me.company.name)} · ${manager?'Comptabilité':'Compte marchand'}</span></div><a class="navbtn" href="/?tab=pickups">↥ Demandes de ramassage</a><a class="navbtn" href="/?tab=returns">↶ Retours & échanges</a><a class="navbtn" href="/?tab=claims">☷ Réclamations</a><a class="navbtn" href="/" style="margin-top:9px">↩ &nbsp; TransitFlow principal</a></aside>
+ root.innerHTML=`<div class="portal"><aside class="sidebar" id="sidebar"><div class="brand">${brand()}</div><div class="brand-note">ESPACE MARCHAND</div><div class="subnav">MENU PRINCIPAL</div>
+ ${Object.entries(titles).map(([key,title])=>`<button class="navbtn ${state.section===key?'active':''}" data-section="${key}"><span class="ico">${uiIcon(({overview:'dashboard',deliveries:'shipments',statements:'finance',stock:'inventory',new:'plus'})[key])}</span><span class="grow">${title}</span>${key==='statements'?'<span class="tinybadge">COD</span>':''}</button>`).join('')}
+ <div class="navuser"><strong>${esc(name)}</strong><span>${esc(state.me.company.name)} · ${manager?'Comptabilité':'Compte marchand'}</span></div><a class="navbtn" href="/?tab=pickups">${uiIcon('pickups')} Demandes de ramassage</a><a class="navbtn" href="/?tab=returns">${uiIcon('returns')} Retours & échanges</a><a class="navbtn" href="/?tab=claims">${uiIcon('claims')} Réclamations</a><a class="navbtn" href="/" style="margin-top:9px">${uiIcon('arrow')} TransitFlow principal</a></aside>
  <div class="base"><header class="top"><div class="leftlogo"><button type="button" class="mobile-button" id="menu-toggle" aria-label="Ouvrir le menu">☰</button><div><div class="crumb">${esc(state.me.company.name)} / ${esc(name)}</div><div class="top-title">${titles[state.section]}</div></div></div><div class="topright">${DEMO?tag('DONNÉES FICTIVES','amber'):tag('Espace sécurisé','green')}${tag('MAD')}</div></header>
  ${DEMO?'<div class="demo-banner">VERSION DÉMO : les chiffres, commandes, stocks et règlements sont fictifs. Les actions n’envoient rien à une vraie société.</div>':''}
  <main class="container">${manager?`<div class="card" style="margin-bottom:18px;display:flex;align-items:center;gap:12px"><strong>Marchand</strong><select id="admin-merchant" class="date-input" style="max-width:330px;flex:1">${state.merchants.map(m=>`<option value="${esc(m.id)}" ${m.id===state.merchantId?'selected':''}>${esc(m.name)}</option>`).join('')}</select>${tag('Vue comptabilité','blue')}</div>`:''}${page()}</main></div></div>`;

@@ -1,3 +1,4 @@
+import {icon as uiIcon,operationsDashboard,emptyState} from './ui.js';
 import {workflowForm} from './workflow-forms.js';
 let c;export const configureWorkflows=ctx=>{c=ctx;};
 const labels={REQUESTED:'Demandé',ASSIGNED:'Affecté',IN_PROGRESS:'En cours',PARTIAL:'Partiel',COLLECTED:'Collecté chez le client',RECEIVED:'Réceptionné',FAILED:'Non effectué',CANCELLED:'Annulé',EXPECTED:'Attendu',MISSING:'Manquant',AUTHORIZED:'Autorisé',IN_TRANSIT:'En transport',INSPECTED:'Contrôlé',COMPLETED:'Terminé',REJECTED:'Refusé',RETURN:'Retour',EXCHANGE:'Échange',OPEN:'Nouveau',WAITING_MERCHANT:'Attente client',WAITING_AGENCY:'Attente agence',RESOLVED:'Résolu',CLOSED:'Clôturé',DRAFT:'Préparée',ACTIVE:'En tournée',PENDING:'À traiter',ATTEMPTED:'Tentative enregistrée',DECLARED:'Déclaré',SUBMITTED:'Remise à vérifier',DISPUTED:'Écart à résoudre',RECONCILED:'Rapproché',RESTOCK:'Remise en stock',RETURN_MERCHANT:'Remise au marchand',RESHIP:'Réexpédition',DISCARD:'Écarté du stock',SEALED:'Scellé',GOOD:'Conforme',DAMAGED:'Endommagé',INCOMPLETE:'Incomplet',DELAY:'Retard',DELIVERY:'Livraison',STOCK:'Stock',PAYMENT:'Paiement',LOST:'Perte',TECHNICAL:'Technique',OTHER:'Autre',NORMAL:'Normale',HIGH:'Haute',URGENT:'Urgente',REFUND:'Remboursement',COMPENSATION:'Indemnisation',FEE_CORRECTION:'Correction de frais'};
@@ -7,11 +8,11 @@ const esc=x=>c.esc(x),date=x=>c.date(x),money=x=>c.money(x),label=x=>labels[x]||
 const badge=x=>`<span class="pill ${['COMPLETED','RECEIVED','RESOLVED','RECONCILED','DELIVERED'].includes(x)?'DELIVERED':['DISPUTED','MISSING','FAILED','REJECTED','DAMAGED'].includes(x)?'REFUSED':'POSTPONED'}">${esc(label(x))}</span>`;
 const button=(action,text,kind='',id='',outline=true)=>`<button type="button" class="btn small ${outline?'outline':''}" data-action="wf-${action}" data-kind="${kind}" data-id="${esc(id)}">${text}</button>`;
 const view=(kind,id)=>button('view','Ouvrir →',kind,id);
-const empty=text=>`<div class="empty">${text||'Aucun élément pour le moment.'}</div>`;
+const empty=text=>emptyState(text||'Aucun élément pour le moment','Les opérations enregistrées apparaîtront ici.',c.state.tab);
 const table=(head,rows)=>rows.length?`<div class="table-scroll"><table class="table workflow-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:empty();
 const info=(name,value)=>`<div><small>${name}</small><strong>${esc(value||'—')}</strong></div>`;
 const actions=x=>`<div class="actions">${x}</div>`;
-const title=(text,sub,buttons='')=>c.heading(text,sub,buttons);
+const title=(text,sub,buttons='')=>c.heading(/^[A-Z]+-\d+-[A-F0-9]+$/.test(text)?`<span title="${esc(text)}">${esc(text.replace(/^([A-Z]+)-\d+-([A-F0-9]+)$/,'$1-$2'))}</span>`:text,sub,buttons);
 const call=(path,data)=>c.api('/workflow'+path,data===undefined?{}:{method:'POST',data});
 export function workflowTabs(){
  if(!c.state.me)return [];const tabs=[];
@@ -23,25 +24,29 @@ export function workflowTabs(){
  if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push('notifications');if(has('*'))tabs.push('settings','audit');return tabs;
 }
 export const workflowNames=names;
-export async function loadWorkflows(){
- if(!c.state.me)return;
- c.state.workflowBoot=await call('/bootstrap');
- if(c.state.tab==='dashboard')c.state.workflowData=await call('/overview');
- else if(workflowTabs().includes(c.state.tab)){
-  if(c.state.workflowDetail&&c.state.workflowDetail.kind===c.state.tab)c.state.workflowData=await call('/'+c.state.tab+'/'+c.state.workflowDetail.id);
-  else if(c.state.tab==='settings')c.state.workflowData=c.state.workflowBoot.settings;
-  else c.state.workflowData=await call('/'+c.state.tab);
- }
+export async function loadWorkflows(isCurrent=()=>true){
+ if(!c.state.me)return;const tab=c.state.tab,detail=c.state.workflowDetail,boot=await call('/bootstrap');if(!isCurrent())return;c.state.workflowBoot=boot;
+ let data=null;if(tab==='dashboard')data=await call('/overview');else if(workflowTabs().includes(tab)){if(detail&&detail.kind===tab)data=await call('/'+tab+'/'+detail.id);else if(tab==='settings')data=boot.settings;else data=await call('/'+tab);}
+ if(!isCurrent())return;c.state.workflowData=data;if(tab==='dashboard')c.state.dashboardSummary=data;
 }
-export function workflowDashboard(){
- const x=c.state.workflowData||{},s=x.shipments||{},p=x.pickups||{},r=x.returns||{};
- const metrics=[['À collecter',p.REQUESTED||0,'pickups'],['Collectés · vers warehouse',s.COLLECTED||0,'pickups'],['Prêts au tri',s.PICKED_UP||0,'operations'],['En livraison',s.OUT_FOR_DELIVERY||0,'routes'],['Retours à autoriser',r.REQUESTED||0,'returns'],['Retours à contrôler',r.RECEIVED||0,'returns'],['Réclamations en retard',x.overdueClaims||0,'claims']];if(x.unreconciledCodCentimes!==null&&x.unreconciledCodCentimes!==undefined)metrics.push(['Fonds à rapprocher',money(x.unreconciledCodCentimes),'cash']);
- return `${title('Pilotage des opérations','Ramassage, warehouse, agences, livraison, retours et service client.',button('refresh','↻ Actualiser'))}<div class="grid cols4 workflow-kpis">${metrics.map(([t,n,tab])=>`<section class="card metric"><span class="metric-label">${esc(t)}</span><strong class="metric-value">${n}</strong>${workflowTabs().includes(tab)||['operations'].includes(tab)&&has('warehouse')?`<button class="mini-link" data-tab="${tab}">Consulter →</button>`:''}</section>`).join('')}</div><section class="card"><h2>Vos espaces de travail</h2><div class="workflow-shortcuts">${workflowTabs().filter(t=>!['settings','audit','notifications'].includes(t)).map(t=>`<button class="btn outline" data-tab="${t}">${names[t]} →</button>`).join('')}</div><p class="note" style="margin-top:20px">Chaque mouvement physique a son scan et son historique. La collecte chez le marchand, la réception warehouse, le départ et l’arrivée agence sont enregistrés séparément.</p></section>`;
+export function workflowDashboard(){return operationsDashboard(c);}
+const listKeys={pickups:'pickups',returns:'returns',claims:'claims',arrivals:'arrivals',routes:'routes',vehicles:'vehicles',audit:'logs'};
+const folded=value=>String(value??'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function detailProgress(kind,data){
+ const config={pickups:[data.pickup,['REQUESTED','ASSIGNED','IN_PROGRESS','COLLECTED','RECEIVED'],['Demandé','Affecté','Collecte','Vers warehouse','Réceptionné']],returns:[data.return,['REQUESTED','AUTHORIZED','IN_TRANSIT','RECEIVED','INSPECTED','COMPLETED'],['Demande','Autorisation','Transport','Réception','Contrôle','Clôture']],routes:[data.route,['DRAFT','ACTIVE','CLOSED'],['Préparation','En tournée','Clôture']],claims:[data.claim,['OPEN','IN_PROGRESS','RESOLVED','CLOSED'],['Ouverture','Traitement','Résolution','Clôture']]};
+ const [record,states,captions]=config[kind]||[];if(!record)return '';let state=record.state;if(state==='PARTIAL')state='COLLECTED';if(state.startsWith('WAITING_'))state='IN_PROGRESS';const current=states.indexOf(state);
+ return `<div class="process-strip" aria-label="Avancement ${names[kind]}">${states.map((item,index)=>`<div class="process-step ${index<current?'done':index===current?'current':''}"><span>${index<current?uiIcon('check'):index+1}</span><strong>${captions[index]}</strong></div>`).join('')}</div>`;
+}
+function listControls(kind,original,filtered){
+ const key=listKeys[kind];if(!key)return '';const all=original[key]||[],f=c.state.workflowFilters[kind]||{},states=[...new Set(all.map(row=>row.state).filter(Boolean))];
+ return `<div class="list-controls"><label class="search-control">${uiIcon('search')}<input id="workflow-search" aria-label="Rechercher dans ${names[kind]}" placeholder="Rechercher une référence, un client, une ville…" value="${esc(f.query||'')}" autocomplete="off"></label>${states.length?`<label class="filter-field"><span>Statut</span><select id="workflow-state"><option value="">Tous les statuts</option>${states.map(state=>`<option value="${esc(state)}" ${f.state===state?'selected':''}>${esc(label(state))}</option>`).join('')}</select></label>`:''}<span class="list-result-count"><strong>${filtered.length}</strong> résultat${filtered.length>1?'s':''}</span></div>`;
 }
 function scanForm(action,id,caption){return `<form class="workflow-scan" data-workflow-scan="${action}" data-id="${esc(id)}"><label for="workflow-scan-input">${caption}</label><div class="scan-row"><input id="workflow-scan-input" name="scan" required autocomplete="off" placeholder="Scanner le tracking / ID puis Entrée"><button class="btn" type="submit">Valider le scan</button></div></form>`;}
 export function workflowPage(){
- const kind=c.state.tab,x=c.state.workflowData||{};
- if(c.state.workflowDetail?.kind===kind)return detailPage(kind,x);
+ const kind=c.state.tab,original=c.state.workflowData||{},key=listKeys[kind],filter=c.state.workflowFilters[kind]||{};
+ if(c.state.workflowDetail?.kind===kind)return `<div class="workflow-detail">${detailProgress(kind,original)}${detailPage(kind,original)}</div>`;
+ const records=key?(original[key]||[]):[],filtered=records.filter(row=>(!filter.state||row.state===filter.state)&&(!filter.query||folded(JSON.stringify(row)+' '+label(row.state||'')).includes(folded(filter.query)))),page=Number(filter.page)||0;
+ const x=key?{...original,[key]:filtered.slice(page*25,page*25+25)}:original;
  let tools=button('refresh','↻ Actualiser'),body='';
  if(kind==='pickups'){
   if(has('pickups.create')||has('pickups.manage'))tools=button('new','＋ Demande de ramassage',kind,'',false)+button('point','＋ Point de ramassage')+tools;
@@ -64,7 +69,7 @@ export function workflowPage(){
  }else if(kind==='notifications'){tools=button('read-all','Tout marquer lu')+tools;body=(x.notifications||[]).map(n=>`<article class="notification-row ${n.read_at?'':'unread'}"><div><strong>${esc(n.title)}</strong><small>${date(n.created_at)}</small></div>${button('notification','Consulter',n.entity_type,n.entity_id)}</article>`).join('')||empty('Vous êtes à jour.');}
  else if(kind==='settings')body=`<form id="workflow-settings" class="form" style="max-width:600px"><h2>Politique d’exploitation</h2>${c.field('Objectif de réponse réclamation (heures)','claimSlaHours',{type:'number',min:1,value:x.claim_sla_hours,required:true})}${c.field('Nombre de tentatives avant dérogation responsable','maxDeliveryAttempts',{type:'number',min:1,value:x.max_delivery_attempts,required:true})}<p class="note">Objectifs internes à adapter aux contrats de votre société. Les frais agence et les tarifs marchands restent configurés séparément.</p><button class="btn" type="submit">Enregistrer</button></form>`;
  else if(kind==='audit')body=table(['Date','Compte','Action','Entité','Détails'],(x.logs||[]).map(l=>[date(l.created_at),esc(l.actor_name||'Intégration / système'),esc(l.action),`${esc(l.entity_type)}<small>${esc(l.entity_id||'')}</small>`,`<details><summary>Consulter</summary><pre>${esc(JSON.stringify(JSON.parse(l.details||'{}'),null,2))}</pre></details>`]));
- return `${title(names[kind],({pickups:'Collecte chez chaque marchand, avec un ramasseur et son véhicule.',returns:'Réception, contrôle, remise au marchand, stock ou nouvel envoi.',claims:'Suivez chaque demande avec son historique et ses pièces.',arrivals:'Contrôlez les colis reçus par rapport au bon de départ.',routes:'Affectation, ordre des arrêts, tentatives et preuve de livraison.'})[kind]||'Suivi de votre activité et de vos opérations.',actions(tools))}<section class="card">${body}</section>`;
+ return `${title(names[kind],({pickups:'Collecte chez chaque marchand, avec un ramasseur et son véhicule.',returns:'Réception, contrôle, remise au marchand, stock ou nouvel envoi.',claims:'Suivez chaque demande avec son historique et ses pièces.',arrivals:'Contrôlez les colis reçus par rapport au bon de départ.',routes:'Affectation, ordre des arrêts, tentatives et preuve de livraison.'})[kind]||'Suivi de votre activité et de vos opérations.',actions(tools))}<section class="card data-panel">${listControls(kind,original,filtered)}${body}${key?`<div class="table-footer"><span>${filtered.length?Math.min(page*25+1,filtered.length):0}–${Math.min(page*25+25,filtered.length)} sur ${filtered.length}${records.length>=300?' · derniers éléments enregistrés':''}</span><div class="actions"><button class="btn outline small" data-action="wf-list-prev" ${page===0?'disabled':''}>Précédent</button><button class="btn outline small" data-action="wf-list-next" ${(page+1)*25>=filtered.length?'disabled':''}>Suivant ${uiIcon('arrow')}</button></div></div>`:''}</section>`;
 }
 function detailPage(kind,x){
  const back=button('back','← Retour à la liste'),role=c.state.me.user.role;
@@ -107,8 +112,9 @@ function detailPage(kind,x){
 export async function workflowAction(action,el){
  if(!action.startsWith('wf-'))return false;const key=action.slice(3),kind=el.dataset.kind,id=el.dataset.id;
  if(key==='refresh'){await c.refresh();return true;}
- if(key==='back'){c.state.workflowDetail=null;await c.refresh();return true;}
- if(key==='view'){c.state.tab=kind;c.state.workflowDetail={kind,id};await c.refresh();return true;}
+ if(key==='list-prev'||key==='list-next'){const filter=c.state.workflowFilters[c.state.tab]||{};filter.page=Math.max(0,(filter.page||0)+(key==='list-next'?1:-1));c.state.workflowFilters[c.state.tab]=filter;c.render();return true;}
+ if(key==='back'){await c.navigate(c.state.tab);return true;}
+ if(key==='view'){await c.navigate(kind,{detail:{kind,id}});return true;}
  if(key==='transition'){const [section,verb]=kind.split('/');await call('/'+section+'/'+id+'/'+verb,{});await c.refresh();return true;}
  if(key==='print'){window.open('/api/workflow/'+kind+'/'+id+'/print','_blank','noopener');return true;}
  if(key==='read-all'){await call('/notifications/read',{});await c.refresh();return true;}
@@ -116,6 +122,8 @@ export async function workflowAction(action,el){
  await workflowForm({c,call,has,label,table,esc},key,kind,id);return true;
 }
 export function wireWorkflows(){
+ document.querySelector('#workflow-search')?.addEventListener('input',event=>{const value=event.target.value;c.state.workflowFilters[c.state.tab]={...(c.state.workflowFilters[c.state.tab]||{}),query:value,page:0};c.render();const input=document.querySelector('#workflow-search');input?.focus();input?.setSelectionRange(value.length,value.length);});
+ document.querySelector('#workflow-state')?.addEventListener('change',event=>{c.state.workflowFilters[c.state.tab]={...(c.state.workflowFilters[c.state.tab]||{}),state:event.target.value,page:0};c.render();});
  document.querySelectorAll('[data-workflow-scan]').forEach(form=>form.addEventListener('submit',async e=>{e.preventDefault();const input=form.elements.scan,scan=input.value,button=form.querySelector('button');input.disabled=true;button.disabled=true;try{await call('/'+form.dataset.workflowScan+'/'+form.dataset.id+'/scan',{scan});c.toast('Scan accepté');await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;input.disabled=false;input.select();}document.querySelector('#workflow-scan-input')?.focus();}));
  document.querySelector('#claim-reply')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),button=e.target.querySelector('button');button.disabled=true;try{await call('/claims/'+c.state.workflowDetail.id+'/messages',{message:f.get('message'),internal:f.get('internal')==='on'});await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}});
  document.querySelector('#claim-upload')?.addEventListener('submit',async e=>{e.preventDefault();const file=e.target.elements.file.files[0];if(!file||file.size>1000000){c.toast('Choisissez une pièce de 1 Mo maximum',true);return;}const button=e.target.querySelector('button');button.disabled=true;try{const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);});await call('/claims/'+c.state.workflowDetail.id+'/attachments',{filename:file.name,mime:file.type,base64});await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}});

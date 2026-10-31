@@ -1,4 +1,4 @@
-# TransitFlow API — société unique, agences et envois (v0.6)
+# TransitFlow API — société unique, agences et envois (v0.7)
 
 Les routes sont préfixées `/api`. Les requêtes navigateur utilisent le cookie HttpOnly `dn_session`. Toute mutation navigateur requiert `X-Requested-With: delivery-ui` et, si présent, un `Origin` identique à `PUBLIC_BASE_URL`. La synchronisation agence utilise un Bearer distinct. JSON sauf import binaire, export XLSX et documents HTML.
 
@@ -197,3 +197,10 @@ Une demande ne change pas le stock. RESTOCK exige réception et inspection confo
 Le reçu créé lors d’une livraison est DECLARED. La remise est SUBMITTED. Pour une agence : net attendu = COD brut − frais agence figés. Un écart donne DISPUTED sans crédit COD ; un rapprochement exact donne RECONCILED et inscrit le brut une seule fois. Un net négatif représente un paiement dû à l’agence pour du prépayé, pas du cash reçu positif.
 
 REFUND est négatif ; avec returnId il exige un retour reçu après livraison. COMPENSATION est positif. Les ajustements sont intégrés une fois aux relevés marchands ; une dette validée est reportée une fois au relevé suivant. Un relevé négatif ou déjà reporté ne peut pas être marqué payé. Les références restent déclaratives ; aucune route ne déclenche un virement.
+
+
+## Recherche et pilotage v0.7
+
+`GET /shipments` accepte `q` (tracking, nom, téléphone, ID exact ou nom marchand), `city`, `status`, `source=EXTERNAL|STOCK`, `merchantId`, `sort=newest|oldest|cod_desc`, `limit` et `offset`. Les critères s’ajoutent au périmètre de la session ; ils ne le remplacent jamais. Le total filtré est renvoyé avant pagination. Le CSV de l’interface exporte uniquement les lignes visibles sélectionnées, avec protection des cellules interprétables comme formules.
+
+`GET /workflow/overview` ajoute `cityDistribution`, `recentShipments`, `recentActivity` et, pour les rôles autorisés, `cashHeldCentimes` filtré sur leur caisse. Les derniers colis et mouvements sont filtrés par la même portée marchand/agence/conducteur que la liste colis. Aucun chiffre de démonstration ni tendance artificielle n’est utilisé dans le tableau de bord.
