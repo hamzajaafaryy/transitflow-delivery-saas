@@ -13,7 +13,7 @@ Une base de projet en français, multi-sociétés (tenants) pour la livraison au
 - Import **CSV et XLSX**, avec validation, prévention des doublons, rapport des erreurs. Export Excel XLSX avec manifest enregistré, pour envoi **manuel** via WhatsApp à un partenaire.
 - Scan externe : endpoint API authentifié ; les événements `RAMASSE`, `EN_COURS`, `EN_LIVRAISON`, `LIVRE`, etc. actualisent automatiquement le colis **si le système externe les envoie**. Idempotence via `eventId` ; rejet des transitions régressives.
 - Espace livreur mobile dans le même site (liste des colis qui lui sont attribués, téléphone, mise à jour de statuts).
-- Espace marchand basé sur le `merchant_id` explicite. Consultations limitées aux colis de ce marchand.
+- Espace marchand basé sur le `merchant_id` explicite : tableau de bord marchand, consultations limitées à ses commandes et **création de nouvelles commandes** automatiquement rattachées au marchand authentifié (sans permission de choisir un partenaire ou livreur).
 - Suivi public par numéro de tracking à forte entropie (sans téléphone, adresse complète ou COD) ; masquer le suivi si même tracking présent chez plusieurs tenants.
 - Stock / fulfillment : création SKU, réception de lots, quantités disponibles/réservées, réservation FIFO transactionnelle et sortie du stock après préparation.
 - Finance initiale : collecte COD confirmée manuellement sur une commande `DELIVERED`, entrée de journal non duplicable. **Pas encore de règlement ou rapprochement complet**.
@@ -104,3 +104,7 @@ The Code128 encoder is implemented locally; the QR encoder carries a vendored
 MIT-licensed Kazuhiko Arase implementation under `src/vendor/qrcode/` with its
 licence notice. New server integration tests cover tenant isolation for labels,
 HTML escaping, role permissions, price edits, and partner update flags.
+
+## Espace marchand — update v0.3
+
+Company admin creates a merchant (`Marchands`), then a login user (`Utilisateurs`, role MERCHANT, attached to that merchant). The merchant logs in through the same company code + email + password form, sees a merchant dashboard and creates orders using **Nouvelle commande**. The server sets the `merchant_id` from the authenticated session rather than trusting the form, and refuses a merchant-supplied partner/driver assignment or foreign merchant ID. A merchant can view only orders associated with their merchant account. Run `npm test` for the access-control regression suite. Static Vercel UI preview is separate, fictional, and does not write into this server.

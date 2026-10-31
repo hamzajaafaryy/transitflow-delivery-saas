@@ -166,3 +166,25 @@ test('driver can print only their assigned labels; merchant cannot access unrela
   assert.equal((await request(`/api/shipments/${one.value.id}/notes`,{method:'POST',as:'D',data:{message:'nope'}})).status,403);
  }finally{await stop();}
 });
+
+test('merchant can create an order for own shop but cannot impersonate another shop or assign a carrier',async()=>{
+ const {request,stop}=await start();
+ try{
+  await request('/api/auth/register',{method:'POST',data:{companyName:'Market',slug:'market',fullName:'Boss',email:'boss@market.ma',password:'very-secure-password-123'}});
+  await request('/api/auth/login',{method:'POST',data:{company:'market',email:'boss@market.ma',password:'very-secure-password-123'}});
+  const shop=await request('/api/merchants',{method:'POST',data:{name:'Boutique Soleil'}});
+  const other=await request('/api/merchants',{method:'POST',data:{name:'Boutique Lune'}});
+  const partner=await request('/api/partners',{method:'POST',data:{name:'Transport Tanger',cities:'Tanger'}});
+  await request('/api/users',{method:'POST',data:{name:'Vendeur A',email:'shop@market.ma',password:'very-secure-password-123',role:'MERCHANT',merchantId:shop.value.id}});
+  await request('/api/auth/login',{method:'POST',as:'merchant',data:{company:'market',email:'shop@market.ma',password:'very-secure-password-123'}});
+  const order={recipient:'Client One',phone:'0612345678',city:'Tanger',address:'Rue du Marché',cod:225,description:'Deux articles'};
+  const created=await request('/api/shipments',{method:'POST',as:'merchant',data:order});assert.equal(created.status,201);
+  const list=await request('/api/shipments',{as:'merchant'});
+  assert.equal(list.status,200);assert.equal(list.value.shipments.length,1);assert.equal(list.value.shipments[0].merchant_id,shop.value.id);assert.equal(list.value.shipments[0].partner_id,null);
+  assert.equal((await request('/api/shipments',{method:'POST',as:'merchant',data:{...order,merchantId:other.value.id}})).status,403);
+  assert.equal((await request('/api/shipments',{method:'POST',as:'merchant',data:{...order,partnerId:partner.value.id}})).status,403);
+  assert.equal((await request('/api/shipments/assign',{method:'POST',as:'merchant',data:{shipmentId:created.value.id,partnerId:partner.value.id}})).status,403);
+  assert.equal((await request('/api/merchants',{as:'merchant'})).status,403);
+  const adminOrders=await request('/api/shipments');assert.equal(adminOrders.value.shipments.length,1);
+ }finally{await stop();}
+});

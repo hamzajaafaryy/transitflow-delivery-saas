@@ -10,7 +10,7 @@ import { STATUSES, STATUS_LABELS, canTransition, canPartnerTransition, mapPartne
 import { xlsx, orderColumns, parseCsv, rowsToOrders } from './excel.mjs';
 import { ticketHtml, publicTrackingHtml } from './ticket.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../public');
-const roles={ADMIN:['*'],OPERATIONS:['shipments','partners','imports','export','users.read'],DRIVER:['driver'],MERCHANT:['merchant'],FINANCE:['shipments.read','finance']};
+const roles={ADMIN:['*'],OPERATIONS:['shipments','partners','imports','export','users.read'],DRIVER:['driver'],MERCHANT:['merchant','shipments.create'],FINANCE:['shipments.read','finance']};
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
 const allowedCities=x=>Array.isArray(x)?x.map(s=>String(s).trim()).filter(Boolean).slice(0,40):String(x||'').split(',').map(s=>s.trim()).filter(Boolean).slice(0,40);
 const sanitize=(s,len=160)=>String(s||'').trim().slice(0,len);
@@ -49,7 +49,9 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   if(!validTracking(tracking))throw fail(400,'Tracking invalide');
   const recipient=sanitize(data.recipient),phone=sanitize(data.phone,35),city=sanitize(data.city,90),address=sanitize(data.address,400),description=sanitize(data.description,250);
   if(!recipient||!phone||!city||!address)throw fail(400,'Champs commande manquants');
-  const cod=centimes(data.cod??0),partnerId=data.partnerId||null,merchantId=data.merchantId||null,driverId=data.driverId||null;
+  const isMerchant=user.role==='MERCHANT';
+  if(isMerchant&&(!user.merchant_id||data.partnerId||data.driverId||(data.merchantId&&data.merchantId!==user.merchant_id)))throw fail(403,'Affectation non autorisée pour ce marchand');
+  const cod=centimes(data.cod??0),partnerId=isMerchant?null:(data.partnerId||null),merchantId=isMerchant?user.merchant_id:(data.merchantId||null),driverId=isMerchant?null:(data.driverId||null);
   if(partnerId&&driverId)throw fail(400,'Un colis ne peut pas être attribué à un partenaire et à un livreur interne simultanément');
   if(partnerId&&!stmt('SELECT 1 FROM partners WHERE id=? AND tenant_id=?',partnerId,user.tenant_id))throw fail(400,'Partenaire invalide');
   if(merchantId&&!stmt('SELECT 1 FROM merchants WHERE id=? AND tenant_id=?',merchantId,user.tenant_id))throw fail(400,'Marchand invalide');
@@ -180,7 +182,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     return send(res,200,{shipments:records});
    }
    if(method==='POST'&&path==='/api/shipments'){
-    permit(user,'shipments');const data=await json(req);return send(res,201,tx(()=>createShipment(user,data)));
+    permit(user,user.role==='MERCHANT'?'shipments.create':'shipments');const data=await json(req);return send(res,201,tx(()=>createShipment(user,data)));
    }
    // Details, ticket and notes are tenant-scoped and role-scoped (never public).
    const detailsMatch=mregex(path,/^\/api\/shipments\/([a-f0-9-]{36})(?:\/(ticket|notes))?$/);
