@@ -136,6 +136,7 @@ async function run(){
  }
  await p.page.setViewportSize({width:390,height:844});await go(p.page,'dashboard');await save(p.page,'16-mobile-dashboard');assert.ok(await p.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile dashboard must not overflow');
  await p.page.setViewportSize({width:390,height:844});await go(p.page,'pickups');assert.ok(await p.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'mobile page must not overflow');
+ const mobileMerchant=await session(people.MERCHANT.email,'shipments',true);await mobileMerchant.page.locator('[data-action="new-shipment"]').first().click();await save(mobileMerchant.page,'17-mobile-order-form');await mobileMerchant.page.keyboard.press('Escape');
  // Model Codespaces forwarding while keeping the public browser URL and cookies.
  const proxyEnv={CODESPACES:'true',CODESPACE_NAME:'transitflow-proxy-ci',GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:'app.github.dev',PORT:'3189'},proxyOrigin='https://transitflow-proxy-ci-3189.app.github.dev';
  const proxyServer=buildServer({environment:proxyEnv,secureCookies:true,sessionSecret:'isolated-proxy-browser-test-secret-123456789'});
