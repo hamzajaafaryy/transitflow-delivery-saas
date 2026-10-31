@@ -1,43 +1,71 @@
-# TransitFlow — Gestion d’une société de livraison
+# TransitFlow — exploitation d’une société de livraison au Maroc
 
-TransitFlow gère **une seule société de livraison** et son réseau d’**agences / hubs par ville**. Les marchands sont les clients de cette société. Un partenaire local est enregistré comme une agence de destination, pas comme une société indépendante pouvant s’inscrire sur la plateforme.
+Version 0.6 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
 
-Version 0.5 : prototype fonctionnel, avec préparation warehouse, ramassage au scan et containers par ville. Les relevés marchands, versements suivis en interne et vues de stock de la version 0.4 sont conservés.
+## Périmètre livré
 
-## Organisation
+- Commandes externes et commandes stock marchand, réservation FIFO atomique, bons de préparation et tickets privés Code128/QR.
+- Demandes de ramassage par boutique/fournisseur, point et rendez-vous ; ramasseur et véhicule personnel ou société ; collecte au scan, manquants et réception warehouse distincte.
+- Containers par ville : attendus/scannés/manquants, contrôle destination/doublons, fermeture, Excel du lot et départ physique.
+- Réception agence, périmètre propre à chaque agence, tournées, tentatives, reports datés, refus, injoignable, perte/dommage et colis retrouvé.
+- Retours et échanges : demande, autorisation, conducteur, transport, réception, inspection, stock conforme, remise au marchand ou nouvel envoi avec nouveau tracking.
+- Réclamations : conversation, agent support, priorité, délai cible configurable, notes internes privées, pièces PNG/JPEG/PDF, résolution et réouverture.
+- COD déclaré, remise, écart de caisse, rapprochement, tarifs marchands, relevés, références de versement, ajustements et report des dettes. Montants en centimes entiers.
+- Notifications internes, audit, désactivation des comptes et révocation serveur des sessions.
 
-- Configuration initiale unique de la société et de son administrateur.
-- Connexion par **email + mot de passe**, sans code société ni inscription multi-sociétés.
-- Rôles `ADMIN`, `OPERATIONS`, `DRIVER`, `MERCHANT`, `FINANCE`.
-- Une agence / hub par ville, interne ou partenaire : nom, ville, opérateur, contact et coût de livraison.
-- Exemple : **Agence Tanger**, opérateur local, **20 MAD par colis livré**. Ce coût est distinct du tarif facturé au marchand.
-- Ajout des villes et modification des tarifs par l’administrateur. Les commandes utilisent les villes configurées et sont automatiquement rattachées au hub de destination.
+Le [cadrage métier et les sources marocaines](docs/OPERATIONS_MAROC.md) distingue les pratiques publiées et les choix propres à TransitFlow. Voir aussi l’[API](docs/API.md).
 
-## Parcours physique d’un colis
+## Comptes et périmètres
 
-1. **Commande marchand** : un colis `EXTERNAL` sera reçu du marchand ; une commande `STOCK` contient les produits à préparer depuis son stock en warehouse.
-2. **Bon de préparation** : bon de livraison pour un colis externe, ou bon stock avec SKU, quantités et emplacements. Imprimer le ticket 100 × 150 mm, avec destinataire, adresse, téléphone, tracking, Code128 et QR.
-3. **Préparation** : coller le ticket sur le colis. Les produits d’un bon stock sont réservés en FIFO dès la création ; le stock physique n’est pas encore sorti.
-4. **Ramassage** : scanner le tracking ou l’ID dans `Préparation & ramassage`. Le colis devient `PICKED_UP`. Pour une commande stock, ce scan confirme la sortie physique des réservations, dans la même transaction. Un colis externe ne prélève aucun stock. Un nouveau scan du même ramassage ne fait pas une deuxième sortie.
-5. **Bon d’envoi par ville** : ouvrir un container pour l’agence. Il prend un instantané des colis ramassés encore disponibles pour cette destination ; une sélection explicite est aussi possible via API.
-6. **Tri au scan** : scanner chaque colis avant de le placer dans le carton/container de sa ville. Contrôle de la ville, de l’agence, du ramassage et de l’appartenance au lot. Une autre ville, un doublon, un colis non ramassé ou déjà réservé à un autre container sont refusés. Affichage `Attendus / Scannés / Restants`.
-7. **Fermeture** : possible uniquement quand tous les colis attendus sont scannés. L’Excel contient exclusivement ce container. Son téléchargement ne confirme pas un départ physique.
-8. **Départ** : après remise physique au transport, l’opérateur confirme le départ. Le container devient `SHIPPED`, ses colis `IN_TRANSIT`. Le tarif agence du container est conservé comme instantané.
-9. **Suivi** : l’agence peut transmettre ses événements API après le départ, avec une clé limitée à ses colis. Un adaptateur au logiciel réel du partenaire reste nécessaire.
+| Compte | Travail principal | Périmètre |
+| --- | --- | --- |
+| ADMIN | Société, villes, comptes, paramètres et audit | Société |
+| OPERATIONS | Warehouse, dispatch, tournées, retours, support | Société ; lecture caisse, sans validation de paiement |
+| DISPATCHER | Ramassages, véhicules, envois et tournées | Société ; sans comptabilité ni entrée stock |
+| WAREHOUSE | Réception/préparation, FIFO, tri et inspection retours | Warehouse ; sans caisse |
+| PICKUP_DRIVER | Collecte et transport des retours affectés | Ses missions et son véhicule |
+| AGENCY_MANAGER | Arrivées, tournées, livreurs, retours et remises | Son agence |
+| AGENCY_AGENT | Réception et consultation des colis/envois | Son agence |
+| DRIVER | Tournées, tentatives, preuve nominative et caisse | Ses colis et tournées |
+| SUPPORT | Contacts, réclamations et autorisation retours | Société ; lecture ramassages, sans stock ni caisse |
+| FINANCE | Rapprochement, tarifs, ajustements, relevés, versements | Société ; sans mouvement physique |
+| MERCHANT | Commandes, stock, collecte/retour, réclamations et relevés | Son magasin |
 
-Un colis ramassé après l’ouverture appartient à un prochain lot. Pour reconstituer un lot avant départ, l’opérateur peut annuler son bon avec un motif puis ouvrir un nouveau container ; les colis sont libérés et les mouvements de stock restent enregistrés. Un envoi déjà expédié ne peut pas être annulé de cette manière.
+Le serveur filtre aussi les documents et pièces jointes. Ramasseur et livreur sont deux rôles distincts ; le compte polyvalent reste à développer.
 
-## Espace marchand et finance
+## Parcours physique
 
-`/merchant.html` donne accès aux livraisons d’hier, des dernières 24 heures ou d’une date, aux relevés et à l’inventaire détaillé du marchand : SKU, quantités physiques/réservées/disponibles, lots, emplacements et allocations.
+1. Le marchand crée EXTERNAL ou STOCK. Les produits appartiennent à son magasin et sont réservés en FIFO ; une rupture annule toute la transaction.
+2. Le dispatcher affecte ramasseur et véhicule à une demande. Le scan chez le marchand donne COLLECTED. Les absents sont motivés et libérés pour une nouvelle demande.
+3. Le magasinier imprime bon et ticket, prépare puis scanne : PICKED_UP. Pour STOCK, les réservations sortent physiquement une seule fois. Un dépôt direct reste possible hors demande active.
+4. Chaque colis attendu est scanné dans le container de sa ville avant fermeture. Excel et départ sont séparés. Le départ donne IN_TRANSIT.
+5. L’agence réceptionne au scan (AT_AGENCY), prépare une tournée et confirme le départ (OUT_FOR_DELIVERY). Chaque arrêt a un résultat avant clôture.
+6. Livrer exige réceptionnaire et COD exact. Un report exige une date future, un échec un motif. Déroger à un report/limite d’essais exige un motif responsable audité.
+7. Le retour suit son propre dossier. La réception seule n’ajoute jamais de stock vendable. L’inspection autorise stock conforme, remise au marchand ou nouveau tracking lié à l’ancien.
 
-Les commandes stock ne peuvent réserver que les produits appartenant au marchand authentifié. Une rupture annule toute la création et toutes les réservations de la commande.
+Douchette clavier avec Entrée, saisie tracking/UUID et URL QR sont acceptées. Pas de scan caméra ni de mode hors ligne.
 
-Le statut de livraison, l’encaissement COD et le versement marchand sont distincts. La comptabilité confirme le COD, configure les tarifs marchands, génère un relevé journalier, le valide puis enregistre une référence de versement. Ces relevés sont des documents de rapprochement interne ; ils ne déclenchent pas de virement bancaire et ne constituent pas des factures fiscales.
+## Exemple comptable
 
-## Démarrage local
+Tanger : COD **200 MAD**, coût agence **20 MAD**, tarif marchand **30 MAD**.
 
-Prérequis : **Node.js 22.13+**, **Python 3** dans `PATH` pour XLSX. Aucune installation npm n’est nécessaire.
+| Flux | Montant |
+| --- | --- |
+| COD déclaré agence | 200 MAD |
+| Frais agence retenus, figés sur l’envoi | 20 MAD |
+| Remise nette attendue | 180 MAD |
+| Relevé marchand après rapprochement, hors ajustement | 170 MAD |
+| Écart commercial avant autres charges | 10 MAD |
+
+Une remise de moins de 180 MAD reste en litige et ne crédite pas automatiquement le COD marchand. Un rapprochement exact comptabilise le brut une seule fois. Le livreur interne remet le brut ; aucune commission personnelle n’est déduite automatiquement.
+
+Un prépayé peut produire des frais et un relevé débiteur. Un remboursement après livraison est un ajustement distinct : le relevé payé reste inchangé, la dette se reporte. Aucun montant négatif n’est marqué comme virement sortant.
+
+`/merchant.html` conserve les livraisons hier/24h/date au calendrier Africa/Casablanca, le stock détaillé, les relevés et impressions. Ce sont des documents de suivi interne, pas des factures fiscales ni des ordres bancaires.
+
+## Démarrage
+
+Prérequis : **Node.js 22.13+**, **Python 3** dans PATH pour XLSX. Aucune dépendance npm de production.
 
 ```bash
 cp .env.example .env
@@ -46,37 +74,30 @@ node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
 npm start
 ```
 
-Ouvrir `http://localhost:3000`, configurer la société une seule fois, se connecter puis ajouter les villes dans **Agences & hubs**. L’administrateur crée les marchands, les utilisateurs et le stock. Tous les rôles utilisent le même site ; le livreur dispose d’une vue mobile.
+Ouvrir http://localhost:3000, configurer la société une fois, puis villes, marchands, comptes et stock. Définir PUBLIC_BASE_URL sur l’origine réelle ; derrière HTTPS, activer COOKIE_SECURE=true. Base : data/delivery.sqlite.
 
 ```bash
-npm run dev
 npm run check
 ```
 
-La base locale est `data/delivery.sqlite`. Le fichier `.env` et les données ne sont pas versionnés. Pour le QR des tickets, définir `PUBLIC_BASE_URL` sur l’origine réelle ; activer `COOKIE_SECURE=true` derrière HTTPS.
+La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, warehouse, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
 
-## Architecture
+## Architecture et migration
 
-| Fichier | Responsabilité |
+| Module dans src/ | Responsabilité |
 | --- | --- |
-| `src/server.mjs` | Serveur HTTP, configuration unique, sessions, commandes, permissions, import et COD |
-| `src/logistics.mjs` | Agences, préparation, FIFO, ramassage, containers, scans, Excel et départ |
-| `src/db.mjs` | Schéma SQLite et migration transactionnelle des anciennes bases |
-| `src/merchant-portal.mjs` | Stock marchand, périodes Maroc, tarifs, relevés et versements |
-| `src/domain.mjs` | Statuts, transitions et normalisation des villes |
-| `src/ticket.mjs` | Ticket Code128 / QR et suivi public limité |
-| `src/excel.mjs`, `scripts/excel.py` | Import CSV et lecture/écriture XLSX sans dépendances |
-| `public/app.js`, `public/operations.js` | Interface principale, ramassage et tri par ville |
-| `public/merchant.js` | Portail marchand avec stock et relevés |
+| server.mjs, auth.mjs, access.mjs | HTTP, comptes, sessions révocables et permissions |
+| db.mjs, workflow-db.mjs | Schéma, migration transactionnelle et contrôle FK |
+| logistics.mjs | Agences, FIFO, préparation, containers et XLSX |
+| pickups.mjs, delivery.mjs | Collectes, véhicules, arrivées, tournées et tentatives |
+| returns.mjs, claims.mjs | Retours, inspection, échanges et service client |
+| cash.mjs, merchant-portal.mjs | Remises, tarifs, relevés et ajustements |
+| workflows.mjs, workflow-shared.mjs | Pilotage, notifications et contrôles partagés |
 
-## Migration depuis la version 0.4
+L’interface principale utilise public/app.js, operations.js, workflows.js et workflow-forms.js. Le portail détaillé utilise merchant.js.
 
-La migration conserve les commandes, utilisateurs, marchands, stock, événements, tarifs et relevés. Elle renomme les anciennes tables/colonnes de sociétés et partenaires vers le modèle société unique / agences. Un ancien transporteur couvrant plusieurs villes est décliné en agences par ville. Les anciens exports restent en base comme archives.
+La migration conserve commandes, utilisateurs, stock, événements et relevés. Elle transforme les anciens transporteurs multi-villes en agences et élargit les rôles sans supprimer les références utilisateurs. Plusieurs sociétés indépendantes dans une base sont refusées atomiquement. Sauvegarder avant mise à niveau.
 
-La base refuse une migration contenant plusieurs sociétés indépendantes, ou plusieurs agences historiques pour une même ville, au lieu de fusionner ou supprimer des données. Toute la migration est transactionnelle. Utiliser une sauvegarde et une base dédiée à la société. Les colonnes historiques `slug` et `plan` restent internes pour la compatibilité des bases, sans sélection de société ni abonnement dans le produit.
+## Limites
 
-## Vérification et limites
-
-`npm run check` vérifie la syntaxe et les tests API/domaine/migration : société unique, permissions marchand/livreur, stock FIFO et annulation, ramassage sans double sortie, mauvais container, doublons, colis manquants, instantanés de tarifs, Excel, départ, événements agence, relevés et migration sans perte.
-
-Le prototype n’a pas de connecteur réel à un partenaire, de preuve signée de remise, d’application scanner matérielle spécifique, de rapprochement comptable agence complet, de paiement bancaire automatique, de MFA, de récupération de compte ou de sauvegardes gérées. Le scan utilise une douchette clavier avec Entrée ou la saisie du tracking/ID ; le scan caméra n’est pas implémenté. Les reprises/retours au stock et les règles avancées multi-colis restent à compléter avant exploitation réelle.
+Les parcours sont exécutables ; l’application n’est pas certifiée prête pour une exploitation à grande échelle. La [suite du périmètre](docs/ROADMAP.md) comprend connecteurs partenaires réels, banques, signature/photo/OTP, approvisionnement SKU, multi-hubs, multi-cartons/livraison partielle, fiscalité, MFA/récupération, sauvegardes et charge. Les frais spéciaux de retour/stockage/ramassage utilisent un ajustement motivé ; aucun contrat d’un autre opérateur n’est appliqué automatiquement.

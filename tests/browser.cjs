@@ -65,7 +65,7 @@ async function run(){
  const m=await session(people.MERCHANT.email,'shipments');
  const tracks=[];
  for(const source of ['EXTERNAL','STOCK']){
-  await click(m.page,'[data-action="new-shipment"]');await choose(m.page,{source,city:'Tanger'});
+  await m.page.locator('[data-action="new-shipment"]').first().click();await choose(m.page,{source,city:'Tanger'});
   await fill(m.page,{recipient:source+' Client',phone:'0612345678',address:'Rue Test 12',cod:200,description:'Commande '+source});
   if(source==='STOCK'){await choose(m.page,{productId:product.id});await fill(m.page,{quantity:2});}
   await submit(m.page);await eventually(()=>db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source)?.tracking,v=>Boolean(v),'created '+source);tracks.push(db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source).tracking);

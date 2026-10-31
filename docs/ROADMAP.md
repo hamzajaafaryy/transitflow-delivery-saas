@@ -1,29 +1,37 @@
-# TransitFlow — suite du système d’une société de livraison
+# Périmètre livré et travaux restants — v0.6
 
-## Implémenté en v0.5
+## Disponible
 
-- Société unique, configuration initiale et connexion email/mot de passe.
-- Agences / hubs par ville, internes ou partenaires, coût local indépendant du tarif marchand.
-- Commandes externes et commandes stock, bons, tickets et réservation FIFO atomique.
-- Scan ramassage avec sortie de stock, tri en containers par ville, contrôle des attendus/manquants/doublons, fermeture, Excel et confirmation de départ.
-- Suivi agence entrant avec clé dédiée, contrôle des transitions et idempotence.
-- Espace marchand, stock détaillé, relevés journaliers et suivi comptable des versements.
-- Migration transactionnelle sans fusion de sociétés indépendantes.
+Société unique ; onze rôles ; agences par ville ; commandes externes/stock FIFO ; tickets et bons ; collecte avec ramasseur/véhicule personnel ; réception warehouse ; containers/Excel/départ ; arrivée agence ; tournées/tentatives ; motifs/report/dérogation ; perte/dommage/colis retrouvé ; retours/inspection/restock/remise marchand/nouvel envoi/échange ; réclamations/pièces privées ; notifications ; COD déclaré/remis/rapproché ; frais agence retenus ; tarifs/relevés/ajustements/dettes ; sessions révocables et audit.
 
-## Opérations à compléter
+Le [cadrage métier](OPERATIONS_MAROC.md) décrit les cas et sources. Les tests API et parcours Chromium de la CI sont reproductibles.
 
-- Réception à l’agence au scan, preuve de remise signée, écart départ/arrivée et transfert entre hubs.
-- Comptes d’agence avec périmètre dédié, affectation des livreurs au hub et tournées.
-- Retours au warehouse avec inspection et remise en stock, nouvelle tentative de livraison et échange.
-- Bons de préparation groupés et picking multi-commandes ; plusieurs cartons physiques pour un envoi ; impression en lot.
-- Intégrations officielles avec chaque opérateur : format Excel, webhooks/polling, authentification, retries et gestion des conflits.
-- Lecture caméra en complément de la douchette clavier / saisie de tracking.
+## Intégrations et preuves
 
-## Finance et exploitation
+- Adaptateur réel par partenaire : authentification, modèle Excel, API sortante, retries et conflits. Le webhook générique n’établit pas de connexion commerciale.
+- Paiement bancaire/carte réel et import de relevés : les références actuelles sont déclaratives et rapprochées manuellement.
+- Signature, photo, GPS ou OTP de remise : preuve actuelle nominative/référence et historique seulement.
+- SMS/WhatsApp/email/push : notifications actuelles dans l’application.
 
-- Comptabilité complète des agences : COD détenu, frais dus sur livraisons, rapprochement des remises et règlements.
-- Grand livre immuable et écritures de contrepassation, traitement des litiges et documents fiscaux adaptés.
-- Stockage et migrations de production, sauvegardes/restaurations, observabilité et tests de charge.
-- Authentification renforcée : MFA, récupération et révocation de sessions, invitations, limites de requêtes et audit indépendant.
+## Cas physiques avancés
 
-Il n’existe pas de projet de vente d’abonnements SaaS ni d’inscription de sociétés indépendantes dans ce modèle produit. Chaque installation est dédiée à une seule société et à son réseau d’agences.
+- Collecte de réapprovisionnement SKU avant entrée warehouse ; actuellement entrées enregistrées par le magasinier.
+- Picking groupé, scan EAN, inventaire tournant et écarts d’inventaire.
+- Plusieurs cartons/commande, livraison partielle, échange simultané au pas de porte ; actuellement colis livré entier et remplacement après contrôle du retour.
+- Transferts multi-hubs, transporteurs intermédiaires et circuit de collecte multi-boutiques optimisé ; actuellement une mission par point.
+- Optimisation/GPS, mode hors ligne, caméra ; actuellement ordre d’arrêts et douchette clavier.
+- Compte polyvalent ramasseur/livreur et remplacement de conducteur après départ.
+
+## Finance et contrats
+
+- Frais automatiques de ramassage, stockage, échec, retour, poids/volume, zones et commissions conducteur ; actuellement livraison et ajustements motivés.
+- Partie double, fiscalité et règles de clôture à valider avec un professionnel.
+- Paiement entrant d’une dette marchand, avances et garanties ; actuellement report sur les relevés suivants.
+- Remboursement effectif destinataire et preuve de décaissement : l’ajustement ne réalise pas de remboursement bancaire.
+- Contrepassation d’une remise rapprochée/relevé validé : les documents restent figés, corrections par ajustements et contrôle comptable.
+
+## Production
+
+Sauvegardes et restauration, migrations sur copie anonymisée, supervision/alertes, charge/concurrence, MFA, invitation/récupération, rotation secrets, conservation des pièces et revue des accès ; validation des contrats/données personnelles/documents ; accessibilité complète et tests sur imprimantes/douchettes réelles.
+
+Ces éléments restent hors du périmètre livré. L’interface ne les simule pas comme des services connectés.

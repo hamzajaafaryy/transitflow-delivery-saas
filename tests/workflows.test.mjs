@@ -150,3 +150,29 @@ test('account roles enforce agency boundaries, warehouse/support separation and 
   const me=(await t.request('/api/me')).value;assert.equal((await t.request('/api/users/'+me.user.id,{method:'PATCH',data:{active:false}})).status,409);
  }finally{await t.stop();}
 });
+
+test('partner cash retains the frozen agency fee; prepaid delivery produces a net payable to the agency',async()=>{
+ const t=await start();try{
+  await t.merchant();
+  for(const [cod,expected] of [[200,180],[0,-20]]){
+   const s=await t.order({cod},'merchant');await t.pickup(s.value.tracking);await sendToAgency(t,s.value);
+   const delivered=await t.request('/api/integrations/status',{method:'POST',token:t.agencies.Tanger.apiKey,data:{eventId:'net-'+cod,tracking:s.value.tracking,status:'LIVRE'}});assert.equal(delivered.status,200,JSON.stringify(delivered.value));
+   const receipt=(await get(t,'/cash')).value.receipts.find(r=>r.shipment_id===s.value.id);assert.equal(receipt.agency_fee_centimes,2000);assert.equal(receipt.amount_centimes,cod*100);
+   const remit=await post(t,'/cash/remittances',{receiptIds:[receipt.id],proofReference:'NET-AGENCE-'+cod});assert.equal(remit.status,201,JSON.stringify(remit.value));assert.equal(remit.value.expectedCentimes,expected*100);
+   assert.equal((await post(t,'/cash/remittances/'+remit.value.id+'/reconcile',{receivedAmount:expected,note:'Frais agence retenus selon contrat'})).value.state,'RECONCILED');
+   const entry=t.db.prepare("SELECT amount_centimes FROM ledger WHERE shipment_id=? AND type='COD_COLLECTED'").get(s.value.id);assert.equal(entry?.amount_centimes??0,cod*100);
+   assert.equal((await post(t,'/cash/remittances',{receiptIds:[receipt.id],proofReference:'REMISE-DOUBLE'})).status,409);
+  }
+ }finally{await t.stop();}
+});
+
+test('one active mission per vehicle and read-only support pickup access',async()=>{
+ const t=await start();try{
+  const mid=await t.merchant();await account(t,'SUPPORT','support');const driver=await account(t,'PICKUP_DRIVER','pickup');const vehicle=(await post(t,'/vehicles',{plate:'MISSION-1',kind:'CAR',ownership:'DRIVER',driverId:driver})).value.id;
+  const point=(await post(t,'/pickup-points',{label:'Boutique',contactName:'Marchand',phone:'0612345678',city:'Casa',address:'Adresse boutique'},'merchant')).value.id;
+  const ids=[];
+  for(let n=0;n<2;n++){const s=await t.order({},'merchant'),p=await post(t,'/pickups',{pointId:point,scheduledAt:new Date().toISOString(),shipmentIds:[s.value.id]},'merchant');ids.push(p.value.id);await post(t,'/pickups/'+p.value.id+'/assign',{driverId:driver,vehicleId:vehicle});}
+  assert.equal((await get(t,'/pickups/'+ids[0],'support')).status,200);assert.equal((await post(t,'/pickups/'+ids[0]+'/start',{},'support')).status,403);
+  assert.equal((await post(t,'/pickups/'+ids[0]+'/start',{},'pickup')).status,200);assert.equal((await post(t,'/pickups/'+ids[1]+'/start',{},'pickup')).status,409);
+ }finally{await t.stop();}
+});
