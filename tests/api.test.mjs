@@ -31,7 +31,9 @@ test('driver and merchant permissions; private labels and redacted public tracki
   const ticket=await t.request(`/api/shipments/${a.value.id}/ticket`,{as:'driver'});assert.equal(ticket.status,200);assert.match(ticket.value,/code128/);assert.match(ticket.value,/qrcode/);assert.ok(!ticket.value.includes('<script>alert(1)</script>'));
   assert.equal((await t.request(`/api/shipments/${a.value.id}/status`,{method:'POST',as:'driver',data:{status:'OUT_FOR_DELIVERY'}})).status,409);
   await t.pickup(a.value.tracking);
-  for(const status of ['OUT_FOR_DELIVERY','DELIVERED'])assert.equal((await t.request(`/api/shipments/${a.value.id}/status`,{method:'POST',as:'driver',data:{status}})).status,200);
+  const tour=await t.request('/api/workflow/routes',{method:'POST',data:{agencyId:t.agencies.Casablanca.id,driverId:driver.value.id,shipmentIds:[a.value.id]}});assert.equal(tour.status,201,JSON.stringify(tour.value));
+  assert.equal((await t.request('/api/workflow/routes/'+tour.value.id+'/start',{method:'POST',as:'driver',data:{}})).status,200);
+  assert.equal((await t.request('/api/workflow/shipments/'+a.value.id+'/attempts',{method:'POST',as:'driver',data:{result:'DELIVERED',receiverName:'Client',collectedAmount:200}})).status,201);
   assert.equal((await t.request(`/api/shipments/${b.value.id}/status`,{method:'POST',as:'driver',data:{status:'DELIVERED'}})).status,403);
   const publicTracking=await t.request('/api/tracking/'+a.value.tracking,{as:'guest'});assert.equal(publicTracking.status,200);for(const key of ['recipient','phone','address','cod_centimes'])assert.equal(publicTracking.value[key],undefined);
   const publicPage=await t.request('/suivi/'+a.value.tracking,{as:'guest'});assert.ok(!publicPage.value.includes('0612345678'));assert.ok(!publicPage.value.includes('Rue Principale'));
@@ -114,7 +116,9 @@ test('container/fee snapshots, late parcels, cancellation and authenticated agen
   assert.equal((await sync({eventId:'event-2',status:'LIVRE'})).status,200);assert.equal((await sync({eventId:'event-3',status:'EN_COURS'})).status,409);
   assert.equal((await sync({eventId:'wrong-agency'},t.agencies.Rabat.apiKey)).status,404);assert.equal((await sync({eventId:'bad-key'},'invalid')).status,401);
   assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM ledger').get().n,0);
-  assert.equal((await t.request('/api/ledger/collect',{method:'POST',data:{shipmentId:a.value.id}})).status,201);assert.equal((await t.request('/api/ledger/collect',{method:'POST',data:{shipmentId:a.value.id}})).status,409);
+  assert.equal((await t.request('/api/ledger/collect',{method:'POST',data:{shipmentId:a.value.id}})).status,409);
+  const receipt=(await t.request('/api/workflow/cash')).value.receipts.find(r=>r.shipment_id===a.value.id);const remittance=await t.request('/api/workflow/cash/remittances',{method:'POST',data:{receiptIds:[receipt.id],proofReference:'REM-AGENCE-001'}});assert.equal(remittance.status,201);
+  assert.equal((await t.request('/api/workflow/cash/remittances/'+remittance.value.id+'/reconcile',{method:'POST',data:{receivedAmount:180}})).status,200);assert.equal((await t.request('/api/ledger/collect',{method:'POST',data:{shipmentId:a.value.id}})).status,409);
   assert.equal((await t.request('/api/dispatches/'+next.value.dispatch.id+'/cancel',{method:'POST',data:{reason:'Reconstitution du lot'}})).status,200);
   assert.equal((await t.request('/api/dispatches',{method:'POST',data:{agencyId:t.agencies.Tanger.id}})).value.summary.expected,1);
  }finally{await t.stop();}

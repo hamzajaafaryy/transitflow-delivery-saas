@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { cityKey } from './domain.mjs';
+import { workflowSchema } from './workflow-db.mjs';
 
 // Upgrade the previous pilot in place; never merge independent companies.
 function migrateNames(db) {
@@ -32,7 +33,7 @@ export function openDb(file = process.env.DB_PATH || './data/delivery.sqlite') {
   if (full !== ':memory:') mkdirSync(dirname(full), { recursive: true });
   const db = new DatabaseSync(full);
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE');
   try {
   migrateNames(db);
   db.exec(`
@@ -207,7 +208,9 @@ CREATE TABLE IF NOT EXISTS dispatch_items (
 );
 CREATE INDEX IF NOT EXISTS dispatch_items_lookup ON dispatch_items(company_id,dispatch_id,scanned_at);
   `);
-  db.exec('COMMIT');
+  workflowSchema(db);
+  const broken=db.prepare('PRAGMA foreign_key_check').all();if(broken.length)throw Error('Migration refusée : références incohérentes dans la base');
+  db.exec('COMMIT; PRAGMA foreign_keys=ON');
   } catch(error) { db.exec('ROLLBACK');db.close();throw error; }
   return db;
 }

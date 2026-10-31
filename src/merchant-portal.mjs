@@ -86,14 +86,14 @@ function deliveredRows(ctx,merchantId,window){
  ORDER BY s.delivered_at DESC`,ctx.companyId,merchantId,window.start,window.end);
  return rows.map(s=>{
   const rate=findRate(ctx,merchantId,s.city);
-  return {...s,collected:Boolean(s.collected),feeCentimes:rate?.fee_centimes??null,
-   estimatedNetCentimes:rate?Math.max(0,s.codCentimes-rate.fee_centimes):null,
+  return {...s,collected:s.codCentimes===0||Boolean(s.collected),feeCentimes:rate?.fee_centimes??null,
+   estimatedNetCentimes:rate?s.codCentimes-rate.fee_centimes:null,
    feeSource:rate?.city_key??null};
  });
 }
 function statementList(ctx,merchantId){
  return ctx.all(`SELECT id,reference,service_date AS serviceDate,status,shipment_count AS shipmentCount,
- gross_centimes AS grossCentimes,fee_centimes AS feeCentimes,net_centimes AS netCentimes,
+ gross_centimes AS grossCentimes,fee_centimes AS feeCentimes,net_centimes AS netCentimes,adjustment_centimes AS adjustmentCentimes,carried_to_statement_id AS carriedToStatementId,
  created_at AS createdAt,confirmed_at AS confirmedAt,paid_at AS paidAt,payment_reference AS paymentReference
  FROM merchant_statements WHERE company_id=? AND merchant_id=? ORDER BY service_date DESC,created_at DESC LIMIT 120`,ctx.companyId,merchantId);
 }
@@ -102,14 +102,17 @@ function overview(ctx,merchantId,params){
  if(!merchant)throw bad(404,'Marchand introuvable');
  const deliveries=deliveredRows(ctx,merchantId,window);
  const statements=statementList(ctx,merchantId);
+ const balances=ctx.stmt("SELECT COALESCE(SUM(CASE WHEN status<>'PAID' AND carried_to_statement_id IS NULL AND net_centimes>0 THEN net_centimes ELSE 0 END),0) AS awaiting,COALESCE(SUM(CASE WHEN status<>'PAID' AND carried_to_statement_id IS NULL AND net_centimes<0 THEN -net_centimes ELSE 0 END),0) AS debt,COALESCE(SUM(CASE WHEN status='PAID' AND net_centimes>0 THEN net_centimes ELSE 0 END),0) AS paid FROM merchant_statements WHERE company_id=? AND merchant_id=?",ctx.companyId,merchantId);
  const summary={delivered:deliveries.length,grossDeliveredCentimes:deliveries.reduce((a,x)=>a+x.codCentimes,0),
-  collected:deliveries.filter(x=>x.collected).length,
+  collected:deliveries.filter(x=>x.collected&&x.codCentimes>0).length,
   collectedCentimes:deliveries.filter(x=>x.collected).reduce((a,x)=>a+x.codCentimes,0),
   pendingCollectionCentimes:deliveries.filter(x=>!x.collected).reduce((a,x)=>a+x.codCentimes,0),
   unpriced:deliveries.filter(x=>x.feeCentimes===null).length,
   collectedReadyForStatementCentimes:deliveries.filter(x=>x.collected&&x.feeCentimes!==null&&!x.statementId).reduce((a,x)=>a+x.estimatedNetCentimes,0),
-  statementsAwaitingPaymentCentimes:statements.filter(s=>s.status!=='PAID').reduce((a,s)=>a+s.netCentimes,0),
-  statementsPaidCentimes:statements.filter(s=>s.status==='PAID').reduce((a,s)=>a+s.netCentimes,0)
+  statementsAwaitingPaymentCentimes:balances.awaiting,
+  debitBalanceCentimes:balances.debt,
+  pendingAdjustmentsCentimes:ctx.stmt('SELECT COALESCE(SUM(amount_centimes),0) AS n FROM merchant_adjustments WHERE merchant_id=? AND company_id=? AND applied_statement_id IS NULL',merchantId,ctx.companyId).n,
+  statementsPaidCentimes:balances.paid
  };
  return {merchant,window,summary,deliveries,statements,stock:stockRows(ctx,merchantId).summary,
   warning:'Livré ne signifie pas encaissé. Les sommes « à verser » sont un suivi interne, pas un virement bancaire. Tarifs non configurés = net indisponible.'};
@@ -130,7 +133,7 @@ function printStatement(ctx,merchantId,statementId){
  const lines=ctx.all(`SELECT tracking,city,delivered_at,cod_centimes,fee_centimes,net_centimes
  FROM merchant_statement_lines WHERE statement_id=? AND company_id=? ORDER BY delivered_at,tracking`,st.id,ctx.companyId);
  const cash=n=>(n/100).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD';
- return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relevé ${esc(st.reference)}</title><style>body{font:14px Arial,sans-serif;color:#1f2937;margin:30px}header{display:flex;justify-content:space-between;border-bottom:3px solid #2563eb;padding-bottom:20px}h1{margin:0}.muted{color:#64748b}table{border-collapse:collapse;width:100%;margin-top:26px}td,th{padding:12px 8px;border-bottom:1px solid #dbe2eb;text-align:left}th{background:#f1f5f9}.right{text-align:right}strong{color:#111827}.totals{max-width:380px;margin:25px 0 25px auto}.row{display:flex;justify-content:space-between;padding:7px}.foot{margin-top:35px;color:#64748b;font-size:12px}.action{margin:20px 0}@media print{.action{display:none}body{margin:12mm}}</style></head><body><button class="action" onclick="window.print()">Imprimer / Enregistrer en PDF</button><header><div><h1>TransitFlow</h1><p class="muted">Relevé des livraisons et règlement marchand</p><p><strong>${esc(st.company_name)}</strong></p></div><div class="right"><strong>${esc(st.reference)}</strong><p>${esc(st.service_date)}</p><p>${esc(st.merchant_name)}</p><p>${esc(st.status)}</p></div></header><p>Ce document détaille les colis livrés, l'encaissement COD confirmé et les frais contractuels appliqués. <strong>Ce n'est pas une facture fiscale ni une preuve de virement.</strong></p><table><thead><tr><th>Tracking</th><th>Ville</th><th>Date de livraison</th><th class="right">COD</th><th class="right">Frais</th><th class="right">Net</th></tr></thead><tbody>${lines.map(l=>`<tr><td>${esc(l.tracking)}</td><td>${esc(l.city)}</td><td>${esc(l.delivered_at?.slice(0,16).replace('T',' '))}</td><td class="right">${cash(l.cod_centimes)}</td><td class="right">${cash(l.fee_centimes)}</td><td class="right">${cash(l.net_centimes)}</td></tr>`).join('')}</tbody></table><div class="totals"><div class="row"><span>COD confirmé</span><strong>${cash(st.gross_centimes)}</strong></div><div class="row"><span>Frais de livraison</span><strong>${cash(st.fee_centimes)}</strong></div><div class="row"><span>Net à reverser</span><strong>${cash(st.net_centimes)}</strong></div></div><div class="foot">Statut: ${esc(st.status)} · Référence de virement: ${esc(st.payment_reference||'Non renseignée')} · Document généré depuis TransitFlow.</div></body></html>`;
+ return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relevé ${esc(st.reference)}</title><style>body{font:14px Arial,sans-serif;color:#1f2937;margin:30px}header{display:flex;justify-content:space-between;border-bottom:3px solid #2563eb;padding-bottom:20px}h1{margin:0}.muted{color:#64748b}table{border-collapse:collapse;width:100%;margin-top:26px}td,th{padding:12px 8px;border-bottom:1px solid #dbe2eb;text-align:left}th{background:#f1f5f9}.right{text-align:right}strong{color:#111827}.totals{max-width:380px;margin:25px 0 25px auto}.row{display:flex;justify-content:space-between;padding:7px}.foot{margin-top:35px;color:#64748b;font-size:12px}.action{margin:20px 0}@media print{.action{display:none}body{margin:12mm}}</style></head><body><button class="action" onclick="window.print()">Imprimer / Enregistrer en PDF</button><header><div><h1>TransitFlow</h1><p class="muted">Relevé des livraisons et règlement marchand</p><p><strong>${esc(st.company_name)}</strong></p></div><div class="right"><strong>${esc(st.reference)}</strong><p>${esc(st.service_date)}</p><p>${esc(st.merchant_name)}</p><p>${esc(st.status)}</p></div></header><p>Ce document détaille les colis livrés, l'encaissement COD confirmé et les frais contractuels appliqués. <strong>Ce n'est pas une facture fiscale ni une preuve de virement.</strong></p><table><thead><tr><th>Tracking</th><th>Ville</th><th>Date de livraison</th><th class="right">COD</th><th class="right">Frais</th><th class="right">Net</th></tr></thead><tbody>${lines.map(l=>`<tr><td>${esc(l.tracking)}</td><td>${esc(l.city)}</td><td>${esc(l.delivered_at?.slice(0,16).replace('T',' '))}</td><td class="right">${cash(l.cod_centimes)}</td><td class="right">${cash(l.fee_centimes)}</td><td class="right">${cash(l.net_centimes)}</td></tr>`).join('')}</tbody></table><div class="totals"><div class="row"><span>COD confirmé</span><strong>${cash(st.gross_centimes)}</strong></div><div class="row"><span>Frais de livraison</span><strong>${cash(st.fee_centimes)}</strong></div><div class="row"><span>Ajustements et solde reporté</span><strong>${cash(st.adjustment_centimes||0)}</strong></div><div class="row"><span>${st.net_centimes<0?'Solde débiteur à reporter':'Net à reverser'}</span><strong>${cash(st.net_centimes)}</strong></div></div><div class="foot">Statut: ${esc(st.status)} · Référence de virement: ${esc(st.payment_reference||'Non renseignée')} · Document généré depuis TransitFlow.</div></body></html>`;
 }
 export async function merchantRoute(ctx){
  const {path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment}=ctx;
@@ -194,16 +197,20 @@ export async function merchantRoute(ctx){
   if(stmt('SELECT 1 FROM merchant_statements WHERE company_id=? AND merchant_id=? AND service_date=?',companyId,merchantId,day))throw bad(409,'Relevé déjà généré pour cette date');
   const delivered=deliveredRows(ctx,merchantId,window),uncollected=delivered.filter(x=>x.codCentimes>0&&!x.collected),unpriced=delivered.filter(x=>x.feeCentimes===null),previous=delivered.filter(x=>x.statementId);
   if(uncollected.length||unpriced.length||previous.length)throw bad(409,`Relevé bloqué : ${uncollected.length} COD non encaissés, ${unpriced.length} tarifs manquants, ${previous.length} colis déjà rapprochés`);
-  if(!delivered.length)throw bad(409,'Aucune livraison éligible');
+  const adjustments=all('SELECT * FROM merchant_adjustments WHERE merchant_id=? AND company_id=? AND applied_statement_id IS NULL AND created_at<?',merchantId,companyId,window.end);
+  const carries=all("SELECT * FROM merchant_statements WHERE merchant_id=? AND company_id=? AND status='APPROVED' AND net_centimes<0 AND carried_to_statement_id IS NULL AND service_date<?",merchantId,companyId,day);
+  if(!delivered.length&&!adjustments.length&&!carries.length)throw bad(409,'Aucune livraison ou écriture éligible');
+  const adjustmentTotal=adjustments.reduce((n,a)=>n+a.amount_centimes,0)+carries.reduce((n,c)=>n+c.net_centimes,0);
   const total=delivered.reduce((s,x)=>s+x.codCentimes,0),fees=delivered.reduce((s,x)=>s+x.feeCentimes,0);
-  if(delivered.some(x=>x.feeCentimes>x.codCentimes))throw bad(409,'Frais supérieurs au COD sur un colis, traitement manuel requis');
   const statementId=randomUUID(),reference=`REL-${day.replaceAll('-','')}-${randomUUID().slice(0,6).toUpperCase()}`;
   try{tx(()=>{
-   run(`INSERT INTO merchant_statements(id,company_id,merchant_id,reference,service_date,status,shipment_count,gross_centimes,fee_centimes,net_centimes,created_at,created_by) VALUES(?,?,?,?,?,'DRAFT',?,?,?,?,?,?)`,statementId,companyId,merchantId,reference,day,delivered.length,total,fees,total-fees,new Date().toISOString(),user.id);
+   run(`INSERT INTO merchant_statements(id,company_id,merchant_id,reference,service_date,status,shipment_count,gross_centimes,fee_centimes,net_centimes,created_at,created_by,adjustment_centimes) VALUES(?,?,?,?,?,'DRAFT',?,?,?,?,?,?,?)`,statementId,companyId,merchantId,reference,day,delivered.length,total,fees,total-fees+adjustmentTotal,new Date().toISOString(),user.id,adjustmentTotal);
    for(const x of delivered)run(`INSERT INTO merchant_statement_lines(id,company_id,statement_id,shipment_id,tracking,city,delivered_at,cod_centimes,fee_centimes,net_centimes) VALUES(?,?,?,?,?,?,?,?,?,?)`,randomUUID(),companyId,statementId,x.id,x.tracking,x.city,x.deliveredAt,x.codCentimes,x.feeCentimes,x.codCentimes-x.feeCentimes);
+   for(const a of adjustments){run('INSERT INTO statement_adjustment_lines VALUES(?,?,?,?,?)',companyId,statementId,a.id,a.amount_centimes,a.reference+' — '+a.note);run('UPDATE merchant_adjustments SET applied_statement_id=? WHERE id=? AND company_id=?',statementId,a.id,companyId);}
+   for(const c of carries){run('INSERT INTO statement_carry_lines VALUES(?,?,?,?)',companyId,statementId,c.id,c.net_centimes);run('UPDATE merchant_statements SET carried_to_statement_id=? WHERE id=? AND company_id=?',statementId,c.id,companyId);}
    audit(companyId,user.id,'MERCHANT_STATEMENT_CREATED','merchant_statement',statementId,{merchantId,day,reference,shipments:delivered.length,total,fees});
   });}catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Relevé ou colis déjà inclus');throw e;}
-  return send(res,201,{id:statementId,reference,status:'DRAFT',netCentimes:total-fees});
+  return send(res,201,{id:statementId,reference,status:'DRAFT',netCentimes:total-fees+adjustmentTotal});
  }
  const confirm=path.match(/^\/api\/finance\/merchant-statements\/([a-f0-9-]{36})\/(confirm|mark-paid)$/);
  if(method==='POST'&&confirm){
@@ -216,6 +223,7 @@ export async function merchantRoute(ctx){
   }else{
    const ref=clean(data.paymentReference,100);
    if(st.status!=='APPROVED')throw bad(409,'Validation comptable requise avant versement');
+   if(st.net_centimes<0||st.carried_to_statement_id)throw bad(409,'Solde débiteur à reporter : aucun versement négatif autorisé');
    if(ref.length<5)throw bad(400,'Référence de versement requise');
    tx(()=>{run("UPDATE merchant_statements SET status='PAID',paid_at=?,payment_reference=? WHERE company_id=? AND id=?",new Date().toISOString(),ref,companyId,statementId);audit(companyId,user.id,'MERCHANT_PAYOUT_CONFIRMED','merchant_statement',statementId,{reference:ref,netCentimes:st.net_centimes});});
   }

@@ -1,0 +1,76 @@
+import {id,now} from './db.mjs';
+import {has,requirePermission,agencyScoped,requireAgency} from './access.mjs';
+import {clean,fail,reference,shipment,scanShipment,parcelEvent,notify,isoDate,documentHtml,html,esc} from './workflow-shared.mjs';
+
+export function recordCodReceipt(ctx,s,{holderUserId=null,holderAgencyId=null,method='CASH',paymentReference=''}={}){
+ const agencyFee=holderAgencyId?s.agency_fee_centimes||0:0;
+ if(!s.cod_centimes&&!agencyFee)return;
+ const previous=ctx.stmt('SELECT * FROM cod_receipts WHERE shipment_id=? AND company_id=?',s.id,ctx.companyId);
+ if(previous){if(previous.amount_centimes!==s.cod_centimes)throw fail(409,'Montant COD différent de la déclaration initiale');return previous;}
+ if(!holderUserId&&!holderAgencyId)throw fail(400,'Détenteur des fonds requis');
+ const receiptId=id();ctx.run('INSERT INTO cod_receipts(id,company_id,shipment_id,holder_user_id,holder_agency_id,amount_centimes,method,created_at,payment_reference,agency_fee_centimes) VALUES(?,?,?,?,?,?,?,?,?,?)',receiptId,ctx.companyId,s.id,holderUserId,holderAgencyId,s.cod_centimes,method,now(),clean(paymentReference,120),agencyFee);return {id:receiptId};
+}
+function routeAccess(ctx,r){if(!r)throw fail(404,'Tournée introuvable');if(ctx.user.role==='DRIVER'){if(r.driver_id!==ctx.user.id)throw fail(403,'Tournée non affectée');}else{requirePermission(ctx.user,'routes.manage');requireAgency(ctx.user,r.agency_id);}return r;}
+function routeDetail(ctx,r){return {route:r,items:ctx.all('SELECT i.*,s.tracking,s.recipient,s.phone,s.address,s.city,s.status,s.cod_centimes,s.fragile,s.allow_open FROM delivery_route_items i JOIN shipments s ON s.id=i.shipment_id AND s.company_id=i.company_id WHERE i.route_id=? AND i.company_id=? ORDER BY i.position',r.id,ctx.companyId)};}
+
+export async function deliveryRoute(ctx){
+ const {path,method,user,companyId,stmt,all,run,tx,json,send,res,audit}=ctx;
+ if(path==='/api/workflow/arrivals'){
+  requirePermission(user,'agency.receive');const scope=agencyScoped(user)?' AND d.agency_id=?':'';
+  return send(res,200,{arrivals:all(`SELECT d.*,a.name AS agency_name,COUNT(i.shipment_id) AS expected,COUNT(i.received_at) AS received FROM dispatches d JOIN agencies a ON a.id=d.agency_id JOIN dispatch_items i ON i.dispatch_id=d.id AND i.company_id=d.company_id WHERE d.company_id=? AND d.state='SHIPPED'${scope} GROUP BY d.id ORDER BY d.shipped_at DESC LIMIT 200`,...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
+ }
+ const arrival=path.match(/^\/api\/workflow\/arrivals\/([a-f0-9-]{36})(?:\/(scan|print))?$/);
+ if(arrival){
+  requirePermission(user,'agency.receive');const d=stmt('SELECT * FROM dispatches WHERE id=? AND company_id=?',arrival[1],companyId);if(!d)throw fail(404,'Envoi introuvable');requireAgency(user,d.agency_id);if(d.state!=='SHIPPED')throw fail(409,'Envoi non expédié');
+  const detail=()=>({dispatch:stmt('SELECT * FROM dispatches WHERE id=? AND company_id=?',d.id,companyId),items:all('SELECT i.*,s.tracking,s.city,s.status FROM dispatch_items i JOIN shipments s ON s.id=i.shipment_id AND s.company_id=i.company_id WHERE i.dispatch_id=? AND i.company_id=? ORDER BY i.received_at IS NOT NULL,s.tracking',d.id,companyId)});
+  if(method==='GET'&&!arrival[2])return send(res,200,detail());
+  if(method==='GET'&&arrival[2]==='print'){const x=detail();return html(res,documentHtml('Réception agence '+d.reference,`<p>${esc(d.city)}</p><table><tr><th>Tracking</th><th>Réception</th></tr>${x.items.map(i=>`<tr><td>${esc(i.tracking)}</td><td>${esc(i.received_at||'MANQUANT')}</td></tr>`).join('')}</table>`));}
+  if(method==='POST'&&arrival[2]==='scan'){
+   const data=await json(ctx.req);tx(()=>{const s=scanShipment(ctx,data.scan),item=stmt('SELECT * FROM dispatch_items WHERE dispatch_id=? AND shipment_id=? AND company_id=?',d.id,s.id,companyId);if(!item||s.agency_id!==d.agency_id)throw fail(409,'Colis non attendu dans cette agence / cet envoi');if(item.received_at)throw fail(409,'Colis déjà réceptionné');if(!['IN_TRANSIT','AT_AGENCY','OUT_FOR_DELIVERY','POSTPONED','UNREACHABLE','REFUSED'].includes(s.status))throw fail(409,'Statut incompatible avec une réception agence');run('UPDATE dispatch_items SET received_at=?,received_by=? WHERE dispatch_id=? AND shipment_id=? AND company_id=?',now(),user.id,d.id,s.id,companyId);if(s.status==='IN_TRANSIT')parcelEvent(ctx,s,'AT_AGENCY','Scan arrivée — '+d.reference,'AGENCY');if(!stmt('SELECT 1 FROM dispatch_items WHERE dispatch_id=? AND company_id=? AND received_at IS NULL',d.id,companyId))run('UPDATE dispatches SET received_at=? WHERE id=? AND company_id=?',now(),d.id,companyId);audit(companyId,user.id,'AGENCY_ARRIVAL_SCANNED','shipment',s.id,{dispatchId:d.id});});return send(res,200,detail());
+  }
+ }
+ if(path==='/api/workflow/routes'){
+  requirePermission(user,'routes.manage','routes.self');
+  if(method==='GET'){const where=['r.company_id=?'],args=[companyId];if(user.role==='DRIVER'){where.push('r.driver_id=?');args.push(user.id);}if(agencyScoped(user)){where.push('r.agency_id=?');args.push(user.agency_id||'NO_AGENCY');}return send(res,200,{routes:all(`SELECT r.*,a.city,u.full_name AS driver_name,COUNT(i.shipment_id) AS total,SUM(CASE WHEN i.state='PENDING' THEN 1 ELSE 0 END) AS pending FROM delivery_routes r JOIN agencies a ON a.id=r.agency_id JOIN users u ON u.id=r.driver_id LEFT JOIN delivery_route_items i ON i.route_id=r.id AND i.company_id=r.company_id WHERE ${where.join(' AND ')} GROUP BY r.id ORDER BY r.created_at DESC LIMIT 200`,...args)});}
+  if(method==='POST'){
+   requirePermission(user,'routes.manage');const data=await json(ctx.req),ids=data.shipmentIds,agency=stmt('SELECT * FROM agencies WHERE id=? AND company_id=?',data.agencyId,companyId);if(!agency)throw fail(400,'Agence requise');requireAgency(user,agency.id);
+   const driver=stmt("SELECT * FROM users WHERE id=? AND company_id=? AND role='DRIVER' AND active=1",data.driverId,companyId);if(!driver||driver.agency_id&&driver.agency_id!==agency.id)throw fail(400,'Livreur incompatible avec l’agence');if(!Array.isArray(ids)||!ids.length||ids.length>500||new Set(ids).size!==ids.length)throw fail(400,'Colis de tournée invalides');
+   const day=clean(data.date||now().slice(0,10),10);if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day)))throw fail(400,'Date de tournée invalide');
+   const routeId=id(),ref=reference('TOUR'),max=stmt('SELECT max_delivery_attempts FROM operation_settings WHERE company_id=?',companyId)?.max_delivery_attempts??3;
+   tx(()=>{for(const sid of ids){const s=shipment(ctx,sid);if(s.agency_id!==agency.id||!['AT_AGENCY','POSTPONED','UNREACHABLE',...(agency.kind==='INTERNAL'?['PICKED_UP']:[])].includes(s.status)||!s.ramassed_at)throw fail(409,'Un colis n’est pas disponible dans cette agence');if(stmt('SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id WHERE i.shipment_id=? AND i.company_id=? AND d.state IN (\'OPEN\',\'CLOSED\')',sid,companyId))throw fail(409,'Colis encore dans un container de départ');if(stmt('SELECT 1 FROM delivery_route_items WHERE company_id=? AND shipment_id=? AND active=1',companyId,sid))throw fail(409,'Colis dans une autre tournée');
+     const attempts=stmt('SELECT COUNT(*) AS n,MAX(next_attempt_at) AS next_at FROM delivery_attempts WHERE shipment_id=? AND company_id=?',sid,companyId);if((attempts.n>=max||(s.next_attempt_at||attempts.next_at)&&(s.next_attempt_at||attempts.next_at)>now())&&clean(data.overrideReason).length<5)throw fail(409,'Limite de tentatives ou report futur : motif de dérogation responsable requis');}
+    let vehicle=null;if(data.vehicleId){vehicle=stmt('SELECT * FROM vehicles WHERE id=? AND company_id=? AND active=1',data.vehicleId,companyId);if(!vehicle||vehicle.ownership==='DRIVER'&&vehicle.driver_id!==driver.id)throw fail(400,'Véhicule incompatible');}
+    run("INSERT INTO delivery_routes(id,company_id,agency_id,driver_id,vehicle_id,reference,service_date,state,created_by,created_at) VALUES(?,?,?,?,?,?,?,'DRAFT',?,?)",routeId,companyId,agency.id,driver.id,vehicle?.id||null,ref,day,user.id,now());for(let position=0;position<ids.length;position++){run('INSERT INTO delivery_route_items(company_id,route_id,shipment_id,position) VALUES(?,?,?,?)',companyId,routeId,ids[position],position+1);run('UPDATE shipments SET driver_id=? WHERE id=? AND company_id=?',driver.id,ids[position],companyId);}audit(companyId,user.id,'DELIVERY_ROUTE_CREATED','route',routeId,{count:ids.length,overrideReason:clean(data.overrideReason)});notify(ctx,{users:[driver.id]},'Nouvelle tournée '+ref,'route',routeId);
+   });return send(res,201,{id:routeId,reference:ref,state:'DRAFT'});
+  }
+ }
+ const routeMatch=path.match(/^\/api\/workflow\/routes\/([a-f0-9-]{36})(?:\/(start|close|cancel|print))?$/);
+ if(routeMatch){
+  const r=routeAccess(ctx,stmt('SELECT * FROM delivery_routes WHERE id=? AND company_id=?',routeMatch[1],companyId)),action=routeMatch[2];if(method==='GET'&&!action)return send(res,200,routeDetail(ctx,r));
+  if(method==='GET'&&action==='print'){const d=routeDetail(ctx,r);return html(res,documentHtml('Feuille de tournée '+r.reference,`<table><tr><th>Ordre</th><th>Tracking</th><th>Client</th><th>Adresse / téléphone</th><th>COD</th></tr>${d.items.map(i=>`<tr><td>${i.position}</td><td>${esc(i.tracking)}</td><td>${esc(i.recipient)}</td><td>${esc(i.address)} · ${esc(i.phone)}</td><td>${(i.cod_centimes/100).toFixed(2)} MAD</td></tr>`).join('')}</table>`));}
+  if(method!=='POST')throw fail(405,'Méthode non autorisée');const data=await json(ctx.req);
+  if(action==='start'){if(r.state!=='DRAFT')throw fail(409,'Tournée déjà démarrée');if(stmt("SELECT 1 FROM delivery_routes WHERE company_id=? AND id<>? AND state='ACTIVE' AND (driver_id=? OR (vehicle_id IS NOT NULL AND vehicle_id=?))",companyId,r.id,r.driver_id,r.vehicle_id)||stmt("SELECT 1 FROM pickups WHERE company_id=? AND state='IN_PROGRESS' AND (driver_id=? OR (vehicle_id IS NOT NULL AND vehicle_id=?))",companyId,r.driver_id,r.vehicle_id))throw fail(409,'Conducteur ou véhicule déjà en mission');tx(()=>{const items=routeDetail(ctx,r).items;for(const i of items){if(i.state!=='PENDING'||!['PICKED_UP','AT_AGENCY','POSTPONED','UNREACHABLE'].includes(i.status))throw fail(409,'Contenu de tournée modifié');parcelEvent(ctx,{id:i.shipment_id},'OUT_FOR_DELIVERY','Départ tournée '+r.reference,'DELIVERY');}run("UPDATE delivery_routes SET state='ACTIVE' WHERE id=? AND company_id=?",r.id,companyId);audit(companyId,user.id,'DELIVERY_ROUTE_STARTED','route',r.id);});}
+  else if(action==='close'){if(r.state!=='ACTIVE')throw fail(409,'Tournée non active');if(stmt("SELECT 1 FROM delivery_route_items WHERE route_id=? AND company_id=? AND state='PENDING'",r.id,companyId))throw fail(409,'Des colis n’ont pas encore de résultat de tentative');tx(()=>{run("UPDATE delivery_routes SET state='CLOSED',closed_at=? WHERE id=? AND company_id=?",now(),r.id,companyId);audit(companyId,user.id,'DELIVERY_ROUTE_CLOSED','route',r.id);});}
+  else if(action==='cancel'){requirePermission(user,'routes.manage');if(r.state!=='DRAFT'||clean(data.reason).length<5)throw fail(409,'Seule une tournée non démarrée peut être annulée avec motif');tx(()=>{run("UPDATE delivery_routes SET state='CANCELLED',closed_at=? WHERE id=? AND company_id=?",now(),r.id,companyId);run("UPDATE delivery_route_items SET state='CANCELLED',active=0 WHERE route_id=? AND company_id=?",r.id,companyId);audit(companyId,user.id,'DELIVERY_ROUTE_CANCELLED','route',r.id,{reason:clean(data.reason)});});}
+  else throw fail(404,'Action de tournée inconnue');return send(res,200,routeDetail(ctx,stmt('SELECT * FROM delivery_routes WHERE id=? AND company_id=?',r.id,companyId)));
+ }
+ const attempt=path.match(/^\/api\/workflow\/shipments\/([a-f0-9-]{36})\/attempts$/);
+ if(attempt){
+  requirePermission(user,'driver','routes.manage','claims.manage');const s=shipment(ctx,attempt[1]);if(method==='GET')return send(res,200,{attempts:all('SELECT * FROM delivery_attempts WHERE shipment_id=? AND company_id=? ORDER BY created_at',s.id,companyId)});if(method!=='POST')throw fail(405,'Méthode non autorisée');if(user.role!=='DRIVER')requirePermission(user,'routes.manage');
+  const data=await json(ctx.req),result=data.result,note=clean(data.note,500),requestId=clean(data.requestId,100)||null;
+  if(requestId){const previous=stmt('SELECT * FROM delivery_attempts WHERE company_id=? AND request_id=?',companyId,requestId);if(previous){if(previous.shipment_id!==s.id||previous.actor_id!==user.id)throw fail(409,'Identifiant de tentative déjà utilisé');return send(res,200,{duplicate:true,attempt:previous});}}
+  if(s.status!=='OUT_FOR_DELIVERY')throw fail(409,'Le colis doit être en livraison');if(stmt('SELECT 1 FROM parcel_returns WHERE shipment_id=? AND company_id=? AND active=1',s.id,companyId))throw fail(409,'Retour ouvert : tentative bloquée');if(!['DELIVERED','REFUSED','UNREACHABLE','POSTPONED','BAD_ADDRESS'].includes(result))throw fail(400,'Résultat de tentative invalide');
+  const receiver=clean(data.receiverName,120),paymentMethod=data.paymentMethod||'CASH';let amount=0,next=null;
+  if(result==='DELIVERED'){amount=Math.round(Number(data.collectedAmount??0)*100);if(!receiver||!Number.isSafeInteger(amount)||amount!==s.cod_centimes||!['CASH','CARD'].includes(paymentMethod))throw fail(400,'Nom du réceptionnaire et montant COD exact requis ; pas de livraison partielle');if(paymentMethod==='CARD'&&clean(data.paymentReference).length<5)throw fail(400,'Référence du paiement carte requise');}
+  else{if(note.length<5)throw fail(400,'Motif d’échec requis');if(data.nextAttemptAt)next=isoDate(data.nextAttemptAt,'Prochaine tentative');if(result==='POSTPONED'&&(!next||next<=now()))throw fail(400,'Un report nécessite une date future');}
+  const attemptId=id(),routeItem=stmt('SELECT * FROM delivery_route_items WHERE shipment_id=? AND company_id=? AND active=1',s.id,companyId);
+  if(routeItem&&stmt('SELECT state FROM delivery_routes WHERE id=? AND company_id=?',routeItem.route_id,companyId)?.state!=='ACTIVE')throw fail(409,'Démarrez la tournée');
+  tx(()=>{run('INSERT INTO delivery_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',attemptId,companyId,s.id,routeItem?.route_id||null,user.id,result,note,receiver||null,next,amount,now(),requestId);
+   run('UPDATE shipments SET next_attempt_at=? WHERE id=? AND company_id=?',next,s.id,companyId);
+   parcelEvent(ctx,s,result==='BAD_ADDRESS'?'UNREACHABLE':result,`${result} — ${note||receiver}`,'DELIVERY');if(routeItem)run("UPDATE delivery_route_items SET state='ATTEMPTED',active=0 WHERE route_id=? AND shipment_id=? AND company_id=?",routeItem.route_id,s.id,companyId);
+   if(result==='DELIVERED')recordCodReceipt(ctx,s,{holderUserId:s.driver_id||null,holderAgencyId:s.driver_id?null:s.agency_id,method:paymentMethod,paymentReference:data.paymentReference});
+   audit(companyId,user.id,'DELIVERY_ATTEMPT','shipment',s.id,{result,attemptId,next});notify(ctx,{merchant:s.merchant_id},`${s.tracking} : ${result}`,'shipment',s.id);
+  });return send(res,201,{id:attemptId,status:result==='BAD_ADDRESS'?'UNREACHABLE':result});
+ }
+ return false;
+}

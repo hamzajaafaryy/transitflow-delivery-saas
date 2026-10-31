@@ -31,5 +31,5 @@ export async function start({bootstrap=true,db=openDb(':memory:')}={}){
   assert.equal((await login('admin@example.ma')).status,200);
   for(const city of ['Tanger','Casablanca','Rabat','Agadir'])agencies[city]=await agency(city,city==='Tanger'?20:30,city==='Casablanca'?'INTERNAL':'PARTNER');
  }
- return {db,request,login,agency,merchant,order,pickup,stop,agencies};
+ return {db,base,cookies,request,login,agency,merchant,order,pickup,stop,agencies};
 }

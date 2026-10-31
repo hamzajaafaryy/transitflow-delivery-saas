@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { id,now } from './db.mjs';
+import {has,requirePermission,requireAgency,agencyScoped} from './access.mjs';
+import {pickupReceived} from './workflow-shared.mjs';
 import { centimes,cityKey,STATUS_LABELS } from './domain.mjs';
 import { makeKey,hashKey } from './auth.mjs';
 import { xlsx,orderColumns } from './excel.mjs';
@@ -7,7 +9,7 @@ import { xlsx,orderColumns } from './excel.mjs';
 const clean=(value,max=160)=>String(value??'').trim().slice(0,max);
 const bad=(status,message)=>Object.assign(new Error(message),{status});
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const operations=user=>{if(!['ADMIN','OPERATIONS'].includes(user.role))throw bad(403,'Accès opérations requis');};
+const operations=user=>requirePermission(user,'warehouse','dispatch','dispatch.read','agencies');
 const admin=user=>{if(user.role!=='ADMIN')throw bad(403,'Admin requis');};
 
 export function reserveItems({stmt,all,run,companyId},shipment,items){
@@ -62,7 +64,7 @@ export async function logisticsRoute(ctx){
  const {path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json}=ctx;
  if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all('SELECT city FROM agencies WHERE company_id=? ORDER BY city',companyId).map(x=>x.city)});
  operations(user);
- if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all('SELECT id,name,city,kind,operator_name,contact,fee_centimes,created_at FROM agencies WHERE company_id=? ORDER BY city',companyId)});
+ if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all('SELECT id,name,city,kind,operator_name,contact,fee_centimes,created_at FROM agencies WHERE company_id=?'+(agencyScoped(user)?' AND id=?':'')+' ORDER BY city',...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
  if(method==='POST'&&path==='/api/agencies'){
   admin(user);const data=await json(req),name=clean(data.name,120),city=clean(data.city,90),kind=data.kind||'PARTNER',fee=centimes(data.fee??0);
   if(!name||city.length<2||!['INTERNAL','PARTNER'].includes(kind))throw bad(400,'Nom, ville et type d’agence requis');
@@ -93,41 +95,48 @@ export async function logisticsRoute(ctx){
   }
  }
  if(method==='GET'&&path==='/api/operations/queue'){
+  requirePermission(user,'warehouse');
   const rows=all(`SELECT s.*,m.name AS merchant_name,a.name AS agency_name,
     (SELECT i.dispatch_id FROM dispatch_items i WHERE i.company_id=s.company_id AND i.shipment_id=s.id) AS dispatch_id,
     (SELECT COUNT(*) FROM stock_allocations x WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.state='RESERVED') AS stock_lines
     FROM shipments s LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id LEFT JOIN agencies a ON a.id=s.agency_id AND a.company_id=s.company_id
-    WHERE s.company_id=? AND s.status IN ('CREATED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP') ORDER BY s.created_at LIMIT 1000`,companyId);
+    WHERE s.company_id=? AND s.status IN ('CREATED','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP') ORDER BY s.created_at LIMIT 1000`,companyId);
   return send(res,200,{shipments:rows,limit:1000});
  }
  if(method==='POST'&&path==='/api/operations/ramassage'){
+  requirePermission(user,'warehouse');
   const data=await json(req);
   const result=tx(()=>{
    const s=scannedShipment(ctx,data.scan);
    if(s.status==='PICKED_UP'&&s.ramassed_at&&!stmt("SELECT 1 FROM stock_allocations WHERE shipment_id=? AND company_id=? AND state='RESERVED'",s.id,companyId))return {ok:true,duplicate:true,tracking:s.tracking,status:s.status};
-   if(!['CREATED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(s.status))throw bad(409,'Ce colis ne peut plus être ramassé');
+   if(!['CREATED','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(s.status))throw bad(409,'Ce colis ne peut plus être ramassé');
    const agency=stmt('SELECT * FROM agencies WHERE company_id=? AND id=?',companyId,s.agency_id);
    if(!agency||cityKey(s.city)!==agency.city_key)throw bad(409,'Affectez le colis à l’agence de sa ville avant le ramassage');
+   if(s.hold_reason)throw bad(409,'Préparation bloquée : '+s.hold_reason);
+   if(stmt("SELECT 1 FROM pickup_items WHERE shipment_id=? AND company_id=? AND active=1 AND state='EXPECTED'",s.id,companyId))throw bad(409,'Ce colis est encore attendu chez le marchand ; le ramasseur doit confirmer sa collecte');
    const allocations=all("SELECT * FROM stock_allocations WHERE company_id=? AND shipment_id=? AND state='RESERVED'",companyId,s.id);
    if(s.order_source==='STOCK'&&!allocations.length)throw bad(409,'Bon stock incomplet : aucun produit réservé');
    if(s.order_source==='EXTERNAL'&&allocations.length)throw bad(409,'Source du colis incohérente avec le stock');
    for(const a of allocations){run('UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-?,quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.quantity,a.lot_id,companyId);run("UPDATE stock_allocations SET state='DISPATCHED' WHERE id=? AND company_id=?",a.id,companyId);}
    run('UPDATE shipments SET ramassed_at=? WHERE id=? AND company_id=?',now(),s.id,companyId);event(ctx,s,'PICKED_UP','Scan ramassage — '+(s.order_source==='STOCK'?'préparation stock confirmée':'colis externe réceptionné'));
+   pickupReceived(ctx,s);
    audit(companyId,user.id,'RAMASSAGE_SCANNED','shipment',s.id,{source:s.order_source,stockAllocations:allocations.length});
    return {ok:true,tracking:s.tracking,status:'PICKED_UP',source:s.order_source,city:s.city};
   });return send(res,200,result);
  }
  const prep=path.match(/^\/api\/shipments\/([a-f0-9-]{36})\/preparation$/);
  if(method==='GET'&&prep){
+  requirePermission(user,'warehouse');
   const s=stmt('SELECT s.*,m.name AS merchant_name FROM shipments s LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id WHERE s.id=? AND s.company_id=?',prep[1],companyId);if(!s)throw bad(404,'Colis introuvable');
   const lines=all(`SELECT p.sku,p.name,l.location,SUM(a.quantity) AS quantity,a.state FROM stock_allocations a JOIN inventory_products p ON p.id=a.product_id AND p.company_id=a.company_id JOIN stock_lots l ON l.id=a.lot_id AND l.company_id=a.company_id WHERE a.shipment_id=? AND a.company_id=? AND a.state<>'RELEASED' GROUP BY p.id,l.location,a.state`,s.id,companyId);
   const html=`<!doctype html><html lang="fr"><meta charset="utf-8"><title>Bon ${s.order_source==='STOCK'?'stock':'de livraison'} ${esc(s.tracking)}</title><style>body{font:15px Arial;margin:30px;color:#18273e}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:12px;text-align:left}.tracking{font:700 24px monospace}</style><h1>Bon ${s.order_source==='STOCK'?'stock — préparation warehouse':'de livraison — colis externe'}</h1><p class="tracking">${esc(s.tracking)}</p><p>ID : ${esc(s.id)}</p><p>Marchand : ${esc(s.merchant_name||'—')}</p><p>Destinataire : ${esc(s.recipient)} · ${esc(s.phone)}</p><p>Adresse : ${esc(s.address)} · ${esc(s.city)}</p>${s.order_source==='STOCK'?`<table><thead><tr><th>SKU</th><th>Produit</th><th>Emplacement</th><th>Quantité</th><th>État</th></tr></thead><tbody>${lines.map(l=>`<tr><td>${esc(l.sku)}</td><td>${esc(l.name)}</td><td>${esc(l.location)}</td><td>${l.quantity}</td><td>${esc(l.state)}</td></tr>`).join('')}</tbody></table>`:'<p>Colis à réceptionner du marchand. Aucun prélèvement dans le stock warehouse.</p>'}<p>Imprimez le ticket du colis, collez-le sur le colis préparé, puis scannez le ramassage avant le tri dans le container de sa ville.</p></html>`;
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html);
  }
  if(method==='GET'&&path==='/api/dispatches'){
-  return send(res,200,{dispatches:all(`SELECT d.*,a.name AS agency_name,COUNT(i.shipment_id) AS expected,COUNT(i.scanned_at) AS scanned FROM dispatches d JOIN agencies a ON a.id=d.agency_id AND a.company_id=d.company_id LEFT JOIN dispatch_items i ON i.dispatch_id=d.id AND i.company_id=d.company_id WHERE d.company_id=? GROUP BY d.id ORDER BY d.created_at DESC LIMIT 200`,companyId)});
+  return send(res,200,{dispatches:all(`SELECT d.*,a.name AS agency_name,COUNT(i.shipment_id) AS expected,COUNT(i.scanned_at) AS scanned FROM dispatches d JOIN agencies a ON a.id=d.agency_id AND a.company_id=d.company_id LEFT JOIN dispatch_items i ON i.dispatch_id=d.id AND i.company_id=d.company_id WHERE d.company_id=?${agencyScoped(user)?' AND d.agency_id=?':''} GROUP BY d.id ORDER BY d.created_at DESC LIMIT 200`,...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
  }
  if(method==='POST'&&path==='/api/dispatches'){
+  requirePermission(user,'dispatch');if(agencyScoped(user))throw bad(403,'Le départ warehouse est géré par l’exploitation centrale');
   const data=await json(req),dispatchId=id();
   const result=tx(()=>{
    const agency=stmt('SELECT * FROM agencies WHERE id=? AND company_id=?',data.agencyId,companyId);if(!agency)throw bad(404,'Agence introuvable');
@@ -144,7 +153,7 @@ export async function logisticsRoute(ctx){
  }
  const dispatchMatch=path.match(/^\/api\/dispatches\/([a-f0-9-]{36})(?:\/(scan|close|ship|export|cancel))?$/);
  if(dispatchMatch){
-  const dispatchId=dispatchMatch[1],action=dispatchMatch[2],d=container(ctx,dispatchId);
+  const dispatchId=dispatchMatch[1],action=dispatchMatch[2],d=container(ctx,dispatchId);requireAgency(user,d.agency_id);if(method!=='GET'){requirePermission(user,'dispatch');if(agencyScoped(user))throw bad(403,'Le départ warehouse est géré par l’exploitation centrale');}
   if(method==='GET'&&!action)return send(res,200,containerDetail(ctx,dispatchId));
   if(method==='POST'&&action==='scan'){
    const data=await json(req);

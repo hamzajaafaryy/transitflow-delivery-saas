@@ -1,4 +1,4 @@
-name: Verify MVP
+name: Verify delivery operations
 on:
   push:
   pull_request:
@@ -14,3 +14,28 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm run check
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install browser test tools outside the application
+        run: |
+          npm install --prefix "$RUNNER_TEMP/transitflow-browser" --no-save --package-lock=false playwright@1.62.1
+          node "$RUNNER_TEMP/transitflow-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Run merchant and operations journeys in Chromium
+        env:
+          NODE_PATH: ${{ runner.temp }}/transitflow-browser/node_modules
+        run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: browser-evidence/
+          retention-days: 7

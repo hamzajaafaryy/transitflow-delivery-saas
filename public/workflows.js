@@ -1,0 +1,123 @@
+import {workflowForm} from './workflow-forms.js';
+let c;export const configureWorkflows=ctx=>{c=ctx;};
+const labels={REQUESTED:'Demandé',ASSIGNED:'Affecté',IN_PROGRESS:'En cours',PARTIAL:'Partiel',COLLECTED:'Collecté chez le client',RECEIVED:'Réceptionné',FAILED:'Non effectué',CANCELLED:'Annulé',EXPECTED:'Attendu',MISSING:'Manquant',AUTHORIZED:'Autorisé',IN_TRANSIT:'En transport',INSPECTED:'Contrôlé',COMPLETED:'Terminé',REJECTED:'Refusé',RETURN:'Retour',EXCHANGE:'Échange',OPEN:'Nouveau',WAITING_MERCHANT:'Attente client',WAITING_AGENCY:'Attente agence',RESOLVED:'Résolu',CLOSED:'Clôturé',DRAFT:'Préparée',ACTIVE:'En tournée',PENDING:'À traiter',ATTEMPTED:'Tentative enregistrée',DECLARED:'Déclaré',SUBMITTED:'Remise à vérifier',DISPUTED:'Écart à résoudre',RECONCILED:'Rapproché',RESTOCK:'Remise en stock',RETURN_MERCHANT:'Remise au marchand',RESHIP:'Réexpédition',DISCARD:'Écarté du stock',SEALED:'Scellé',GOOD:'Conforme',DAMAGED:'Endommagé',INCOMPLETE:'Incomplet',DELAY:'Retard',DELIVERY:'Livraison',STOCK:'Stock',PAYMENT:'Paiement',LOST:'Perte',TECHNICAL:'Technique',OTHER:'Autre',NORMAL:'Normale',HIGH:'Haute',URGENT:'Urgente',REFUND:'Remboursement',COMPENSATION:'Indemnisation',FEE_CORRECTION:'Correction de frais'};
+const names={pickups:'Demandes de ramassage',returns:'Retours & échanges',claims:'Réclamations',arrivals:'Réception agence',routes:'Tournées de livraison',cash:'Caisse & remises',vehicles:'Véhicules',adjustments:'Ajustements marchands',notifications:'Notifications',settings:'Paramètres',audit:'Journal des opérations'};
+const has=p=>c.state.me.permissions.includes('*')||c.state.me.permissions.includes(p);
+const esc=x=>c.esc(x),date=x=>c.date(x),money=x=>c.money(x),label=x=>labels[x]||c.state.me.statusLabels[x]||x;
+const badge=x=>`<span class="pill ${['COMPLETED','RECEIVED','RESOLVED','RECONCILED','DELIVERED'].includes(x)?'DELIVERED':['DISPUTED','MISSING','FAILED','REJECTED','DAMAGED'].includes(x)?'REFUSED':'POSTPONED'}">${esc(label(x))}</span>`;
+const button=(action,text,kind='',id='',outline=true)=>`<button type="button" class="btn small ${outline?'outline':''}" data-action="wf-${action}" data-kind="${kind}" data-id="${esc(id)}">${text}</button>`;
+const view=(kind,id)=>button('view','Ouvrir →',kind,id);
+const empty=text=>`<div class="empty">${text||'Aucun élément pour le moment.'}</div>`;
+const table=(head,rows)=>rows.length?`<div class="table-scroll"><table class="table workflow-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(cell=>`<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:empty();
+const info=(name,value)=>`<div><small>${name}</small><strong>${esc(value||'—')}</strong></div>`;
+const actions=x=>`<div class="actions">${x}</div>`;
+const title=(text,sub,buttons='')=>c.heading(text,sub,buttons);
+const call=(path,data)=>c.api('/workflow'+path,data===undefined?{}:{method:'POST',data});
+export function workflowTabs(){
+ if(!c.state.me)return [];const tabs=[];
+ if(['pickups.create','pickups.manage','pickups.read','pickups.self','warehouse'].some(has))tabs.push('pickups');
+ if(['returns.create','returns.manage','returns.receive','returns.read','routes.self','pickups.self'].some(has))tabs.push('returns');
+ if(['claims.create','claims.manage','claims.read'].some(has))tabs.push('claims');
+ if(has('agency.receive'))tabs.push('arrivals');if(has('routes.manage')||has('routes.self'))tabs.push('routes');
+ if(['cash.self','cash.read','cash.manage','finance'].some(has))tabs.push('cash');if(has('pickups.manage')||has('routes.manage')||has('vehicles.self'))tabs.push('vehicles');
+ if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push('notifications');if(has('*'))tabs.push('settings','audit');return tabs;
+}
+export const workflowNames=names;
+export async function loadWorkflows(){
+ if(!c.state.me)return;
+ c.state.workflowBoot=await call('/bootstrap');
+ if(c.state.tab==='dashboard')c.state.workflowData=await call('/overview');
+ else if(workflowTabs().includes(c.state.tab)){
+  if(c.state.workflowDetail&&c.state.workflowDetail.kind===c.state.tab)c.state.workflowData=await call('/'+c.state.tab+'/'+c.state.workflowDetail.id);
+  else if(c.state.tab==='settings')c.state.workflowData=c.state.workflowBoot.settings;
+  else c.state.workflowData=await call('/'+c.state.tab);
+ }
+}
+export function workflowDashboard(){
+ const x=c.state.workflowData||{},s=x.shipments||{},p=x.pickups||{},r=x.returns||{};
+ const metrics=[['À collecter',p.REQUESTED||0,'pickups'],['Collectés · vers warehouse',s.COLLECTED||0,'pickups'],['Prêts au tri',s.PICKED_UP||0,'operations'],['En livraison',s.OUT_FOR_DELIVERY||0,'routes'],['Retours à autoriser',r.REQUESTED||0,'returns'],['Retours à contrôler',r.RECEIVED||0,'returns'],['Réclamations en retard',x.overdueClaims||0,'claims']];if(x.unreconciledCodCentimes!==null&&x.unreconciledCodCentimes!==undefined)metrics.push(['Fonds à rapprocher',money(x.unreconciledCodCentimes),'cash']);
+ return `${title('Pilotage des opérations','Ramassage, warehouse, agences, livraison, retours et service client.',button('refresh','↻ Actualiser'))}<div class="grid cols4 workflow-kpis">${metrics.map(([t,n,tab])=>`<section class="card metric"><span class="metric-label">${esc(t)}</span><strong class="metric-value">${n}</strong>${workflowTabs().includes(tab)||['operations'].includes(tab)&&has('warehouse')?`<button class="mini-link" data-tab="${tab}">Consulter →</button>`:''}</section>`).join('')}</div><section class="card"><h2>Vos espaces de travail</h2><div class="workflow-shortcuts">${workflowTabs().filter(t=>!['settings','audit','notifications'].includes(t)).map(t=>`<button class="btn outline" data-tab="${t}">${names[t]} →</button>`).join('')}</div><p class="note" style="margin-top:20px">Chaque mouvement physique a son scan et son historique. La collecte chez le marchand, la réception warehouse, le départ et l’arrivée agence sont enregistrés séparément.</p></section>`;
+}
+function scanForm(action,id,caption){return `<form class="workflow-scan" data-workflow-scan="${action}" data-id="${esc(id)}"><label for="workflow-scan-input">${caption}</label><div class="scan-row"><input id="workflow-scan-input" name="scan" required autocomplete="off" placeholder="Scanner le tracking / ID puis Entrée"><button class="btn" type="submit">Valider le scan</button></div></form>`;}
+export function workflowPage(){
+ const kind=c.state.tab,x=c.state.workflowData||{};
+ if(c.state.workflowDetail?.kind===kind)return detailPage(kind,x);
+ let tools=button('refresh','↻ Actualiser'),body='';
+ if(kind==='pickups'){
+  if(has('pickups.create')||has('pickups.manage'))tools=button('new','＋ Demande de ramassage',kind,'',false)+button('point','＋ Point de ramassage')+tools;
+  body=table(['Demande / client','Point & rendez-vous','Ramasseur / véhicule','Colis','État',''],(x.pickups||[]).map(p=>[`<strong class="code">${esc(p.reference)}</strong><small>${esc(p.merchant_name)}</small>`,`${esc(p.city)}<small>${esc(p.point_label)} · ${date(p.scheduled_at)}</small>`,`${esc(p.driver_name||'À affecter')}<small>${esc(p.plate||'Véhicule à préciser')}</small>`,`${p.collected} collectés / ${p.expected}<small>${p.received} reçus warehouse</small>`,badge(p.state),view(kind,p.id)]));
+ }else if(kind==='returns'){
+  if(has('returns.create')||has('returns.manage')||has('returns.receive'))tools=button('new','＋ Retour / échange',kind,'',false)+tools;
+  body=table(['Retour / tracking','Marchand / ville','Motif','État','Suite',''],(x.returns||[]).map(r=>[`<strong class="code">${esc(r.reference)}</strong><small>${esc(r.tracking)} · ${esc(label(r.kind))}</small>`,`${esc(r.merchant_name)}<small>${esc(r.city)}</small>`,esc(r.reason),badge(r.state),r.disposition?badge(r.disposition):'À décider',view(kind,r.id)]));
+ }else if(kind==='claims'){
+  if(has('claims.create')||has('claims.manage'))tools=button('new','＋ Réclamation',kind,'',false)+tools;body=table(['Ticket','Objet / catégorie','Marchand','État','Prise en charge',''],(x.claims||[]).map(t=>[`<strong class="code">${esc(t.reference)}</strong><small>${date(t.created_at)}</small>`,`${esc(t.subject)}<small>${esc(label(t.category))} · ${esc(label(t.priority))}</small>`,esc(t.merchant_name||'Équipe interne'),badge(t.state),`${esc(t.assignee||'Non affecté')}<small class="${!['RESOLVED','CLOSED'].includes(t.state)&&t.due_at<new Date().toISOString()?'overdue':''}">Objectif : ${date(t.due_at)}</small>`,view(kind,t.id)]));
+ }else if(kind==='arrivals')body=table(['Bon d’envoi','Agence','Parti le','Réceptionnés','État',''],(x.arrivals||[]).map(d=>[`<strong class="code">${esc(d.reference)}</strong>`,esc(d.city),date(d.shipped_at),`${d.received} / ${d.expected}`,badge(d.received_at?'RECEIVED':'IN_TRANSIT'),view(kind,d.id)]));
+ else if(kind==='routes'){
+  if(has('routes.manage'))tools=button('new','＋ Préparer une tournée',kind,'',false)+tools;body=table(['Tournée','Agence / jour','Livreur','Arrêts','État',''],(x.routes||[]).map(r=>[`<strong class="code">${esc(r.reference)}</strong>`,`${esc(r.city)}<small>${esc(r.service_date)}</small>`,esc(r.driver_name),`${r.total-r.pending} traités / ${r.total}`,badge(r.state),view(kind,r.id)]));
+ }else if(kind==='vehicles'){
+  if(has('pickups.manage'))tools=button('new','＋ Véhicule',kind,'',false)+tools;body=table(['Immatriculation','Type','Propriété','Conducteur','État'],(x.vehicles||[]).map(v=>[`<strong class="code">${esc(v.plate)}</strong>`,esc(v.kind),v.ownership==='DRIVER'?'Personnel du conducteur':'Société',esc(v.driver_name),v.active?'Disponible':'Inactif']));
+ }else if(kind==='cash'){
+  if(has('cash.self')||has('cash.manage')||has('finance'))tools=button('remittance','＋ Déclarer une remise',kind,'',false)+tools;
+  body=`<div class="note">Une livraison crée une déclaration de fonds chez le livreur ou l’agence. La comptabilité confirme seulement les montants réellement reçus et rapprochés.</div><h2 style="margin-top:24px">Fonds par colis</h2>${table(['Tracking','Détenteur','COD','Frais agence','Net à remettre','Mode','État'],(x.receipts||[]).map(r=>[esc(r.tracking),esc(r.holder_name||r.agency_name),money(r.amount_centimes),money(r.agency_fee_centimes),money(r.amount_centimes-r.agency_fee_centimes),r.method==='CARD'?'Carte · justificatif':'Espèces',badge(r.state)]))}<h2 style="margin-top:28px">Remises de fonds</h2>${table(['Référence','Détenteur','COD brut','Frais agence','Net attendu','Net reçu','État',''],(x.remittances||[]).map(r=>[esc(r.reference),esc(r.holder_name||r.agency_name),money(r.declared_centimes),money(r.fee_centimes),money(r.expected_centimes),r.received_centimes===null?'À vérifier':money(r.received_centimes),badge(r.state),(has('cash.manage')||has('finance'))&&r.state!=='RECONCILED'?button('reconcile','Rapprocher','cash',r.id):esc(r.proof_reference)]))}`;
+ }else if(kind==='adjustments'){
+  if(has('finance'))tools=button('new','＋ Ajustement',kind,'',false)+tools;body=`<p class="note">Écritures signées de remboursement, indemnisation ou correction. Elles s’intègrent au prochain relevé éligible ; aucun virement bancaire n’est déclenché ici.</p>${table(['Référence','Marchand','Type','Montant','Motif','Relevé'],(x.adjustments||[]).map(a=>[esc(a.reference),esc(a.merchant_name),esc(label(a.kind)),money(a.amount_centimes),esc(a.note),a.applied_statement_id?'Intégré':'À intégrer']))}`;
+ }else if(kind==='notifications'){tools=button('read-all','Tout marquer lu')+tools;body=(x.notifications||[]).map(n=>`<article class="notification-row ${n.read_at?'':'unread'}"><div><strong>${esc(n.title)}</strong><small>${date(n.created_at)}</small></div>${button('notification','Consulter',n.entity_type,n.entity_id)}</article>`).join('')||empty('Vous êtes à jour.');}
+ else if(kind==='settings')body=`<form id="workflow-settings" class="form" style="max-width:600px"><h2>Politique d’exploitation</h2>${c.field('Objectif de réponse réclamation (heures)','claimSlaHours',{type:'number',min:1,value:x.claim_sla_hours,required:true})}${c.field('Nombre de tentatives avant dérogation responsable','maxDeliveryAttempts',{type:'number',min:1,value:x.max_delivery_attempts,required:true})}<p class="note">Objectifs internes à adapter aux contrats de votre société. Les frais agence et les tarifs marchands restent configurés séparément.</p><button class="btn" type="submit">Enregistrer</button></form>`;
+ else if(kind==='audit')body=table(['Date','Compte','Action','Entité','Détails'],(x.logs||[]).map(l=>[date(l.created_at),esc(l.actor_name||'Intégration / système'),esc(l.action),`${esc(l.entity_type)}<small>${esc(l.entity_id||'')}</small>`,`<details><summary>Consulter</summary><pre>${esc(JSON.stringify(JSON.parse(l.details||'{}'),null,2))}</pre></details>`]));
+ return `${title(names[kind],({pickups:'Collecte chez chaque marchand, avec un ramasseur et son véhicule.',returns:'Réception, contrôle, remise au marchand, stock ou nouvel envoi.',claims:'Suivez chaque demande avec son historique et ses pièces.',arrivals:'Contrôlez les colis reçus par rapport au bon de départ.',routes:'Affectation, ordre des arrêts, tentatives et preuve de livraison.'})[kind]||'Suivi de votre activité et de vos opérations.',actions(tools))}<section class="card">${body}</section>`;
+}
+function detailPage(kind,x){
+ const back=button('back','← Retour à la liste'),role=c.state.me.user.role;
+ if(kind==='pickups'){
+  const p=x.pickup;if(!p)return empty();let tools=back+button('print','Bon de ramassage',kind,p.id);
+  if(has('pickups.manage')&&['REQUESTED','ASSIGNED'].includes(p.state))tools+=button('assign','Affecter ramasseur',kind,p.id);
+  if((has('pickups.manage')||role==='PICKUP_DRIVER')&&p.state==='ASSIGNED')tools+=button('transition','Démarrer le ramassage','pickups/start',p.id,false);
+  if((has('pickups.manage')||role==='PICKUP_DRIVER')&&p.state==='IN_PROGRESS')tools+=button('complete-pickup','Terminer la collecte',kind,p.id,false);
+  if((has('pickups.manage')||role==='MERCHANT')&&['REQUESTED','ASSIGNED'].includes(p.state))tools+=button('cancel','Annuler',kind,p.id);
+  return `${title(p.reference,`${x.point.merchantName} · ${label(p.state)}`,actions(tools))}<div class="card info-list">${info('Point',x.point.address+' · '+x.point.city)}${info('Contact',x.point.contactName+' · '+x.point.phone)}${info('Rendez-vous',date(p.scheduled_at)+' '+p.slot)}${info('Remettant',p.receiver_name)}${info('Observation',p.completion_note)}</div>${p.state==='IN_PROGRESS'&&(has('pickups.manage')||role==='PICKUP_DRIVER')?`<section class="card scan-panel">${scanForm('pickups',p.id,'Collecte chez le marchand — scanner chaque colis remis')}</section>`:''}<section class="card" style="margin-top:20px">${table(['Tracking','Destination','Collecte','Réception warehouse'],(x.items||[]).map(i=>[esc(i.tracking),esc(i.city),badge(i.state),date(i.received_at)]))}</section>`;
+ }
+ if(kind==='returns'){
+  const r=x.return,s=x.shipment;if(!r)return empty();let tools=back+button('print','Bon de retour',kind,r.id);
+  if(has('returns.manage')&&r.state==='REQUESTED')tools+=button('authorize','Décider du retour',kind,r.id,false);
+  if(has('returns.manage')&&['AUTHORIZED','IN_TRANSIT'].includes(r.state))tools+=button('assign-return','Affecter conducteur',kind,r.id);
+  if(r.state==='AUTHORIZED'&&(has('returns.manage')||has('returns.receive')||['DRIVER','PICKUP_DRIVER'].includes(role)))tools+=button('ship-return','Confirmer remise en retour',kind,r.id,false);
+  if(r.state==='IN_TRANSIT'&&has('returns.receive'))tools+=button('receive-return','Scanner réception retour',kind,r.id,false);
+  if(r.state==='RECEIVED'&&has('returns.receive'))tools+=button('inspect-return','Contrôler les produits',kind,r.id,false);
+  if(r.state==='INSPECTED'){
+   if(has('returns.receive')&&r.disposition!=='RESHIP')tools+=button('complete-return','Clôturer le retour',kind,r.id);
+   if((has('returns.manage')||has('returns.receive')||role==='MERCHANT')&&r.disposition==='RESHIP')tools+=button('reexpedite','Créer le nouvel envoi',kind,r.id,false);
+   if((has('returns.manage')||has('returns.receive')||role==='MERCHANT')&&r.kind==='EXCHANGE')tools+=button('replacement','Préparer le remplacement',kind,r.id,false);
+  }
+  if(role==='MERCHANT'&&r.state==='REQUESTED')tools+=button('cancel','Annuler la demande',kind,r.id);
+  return `${title(r.reference,`${s.tracking} · ${label(r.kind)} · ${label(r.state)}`,actions(tools))}<div class="card info-list">${info('Motif',r.reason)}${info('Source',s.order_source==='STOCK'?'Produits du stock marchand':'Colis externe')}${info('Client',s.recipient+' · '+s.city)}${info('État reçu',label(r.condition||''))}${info('Décision',label(r.disposition||''))}${info('Contrôle',r.inspection_note)}${info('Preuve de remise',r.proof_reference)}</div><section class="card" style="margin-top:20px"><h2>Produits retournés</h2>${table(['SKU','Produit','Quantité','Stock disponible'],(x.items||[]).map(i=>[esc(i.sku),esc(i.name),i.quantity,i.restocked_lot_id?'Remis en stock après contrôle':'Non remis en stock']))}<p class="note">Un retour reçu reste hors stock vendable jusqu’au contrôle. Le traitement comptable d’un remboursement est séparé de la réception physique.</p></section>`;
+ }
+ if(kind==='claims'){
+  const t=x.claim;if(!t)return empty();const manager=has('claims.manage'),reply=manager||has('claims.create')||has('claims.reply');let tools=back;if(manager||has('claims.create')&&['RESOLVED','CLOSED'].includes(t.state))tools+=button('claim-status','État / affectation',kind,t.id);
+  return `${title(t.reference,`${t.subject} · ${label(t.state)}`,actions(tools))}<div class="grid cols2"><section class="card"><h2>Conversation</h2><div class="claim-thread">${(x.messages||[]).map(m=>`<article class="claim-message ${m.internal?'internal':''}"><div><strong>${esc(m.author)}</strong><small>${date(m.created_at)} ${m.internal?'· Note interne':''}</small></div><p>${esc(m.message).replaceAll('\n','<br>')}</p></article>`).join('')}</div>${reply&&t.state!=='CLOSED'?`<form id="claim-reply" class="form"><div class="field"><label for="claim-message">Votre message</label><textarea id="claim-message" name="message" required minlength="2" maxlength="4000"></textarea></div>${manager?'<label><input type="checkbox" name="internal"> Note interne uniquement</label>':''}<button class="btn" type="submit">Ajouter la réponse</button></form>`:'<p class="note">Rouvrez le ticket pour ajouter une réponse.</p>'}</section><section class="card"><h2>Pièces jointes</h2>${(x.attachments||[]).map(a=>`<p><a href="/api/workflow/claims/${t.id}/attachments/${a.id}" target="_blank" rel="noopener">${esc(a.filename)}</a> <small>${Math.round(a.size/1024)} Ko</small></p>`).join('')||'<p class="muted">Aucune pièce jointe.</p>'}${reply&&t.state!=='CLOSED'?'<form id="claim-upload" class="form"><div class="field"><label for="claim-file">PNG, JPEG ou PDF · 1 Mo maximum · 5 pièces</label><input id="claim-file" name="file" type="file" required accept="image/png,image/jpeg,application/pdf"></div><button class="btn outline" type="submit">Joindre au ticket</button></form>':''}<div class="divider"></div><div class="info-list">${info('Catégorie',label(t.category))}${info('Priorité',label(t.priority))}${info('Objectif de traitement',date(t.due_at))}${info('Solution',t.resolution)}</div></section></div>`;
+ }
+ if(kind==='arrivals'){
+  const d=x.dispatch,received=(x.items||[]).filter(i=>i.received_at).length;if(!d)return empty();return `${title('Arrivée '+d.city,d.reference,actions(back+button('print','Bon de réception',kind,d.id)))}<section class="card"><div class="container-counts"><div><strong>${x.items.length}</strong><span>Attendus au départ</span></div><div><strong>${received}</strong><span>Réceptionnés</span></div><div class="remaining"><strong>${x.items.length-received}</strong><span>Manquants</span></div></div></section><section class="card scan-panel">${scanForm('arrivals',d.id,'Scanner les colis reçus dans cette agence')}</section><section class="card">${table(['Tracking','Ville','Réception'],x.items.map(i=>[esc(i.tracking),esc(i.city),i.received_at?date(i.received_at):badge('MISSING')]))}</section>`;
+ }
+ if(kind==='routes'){
+  const r=x.route;if(!r)return empty();let tools=back+button('print','Feuille de tournée',kind,r.id);if(r.state==='DRAFT')tools+=button('transition','Démarrer la tournée','routes/start',r.id,false);if(r.state==='ACTIVE')tools+=button('transition','Clôturer la tournée','routes/close',r.id);if(r.state==='DRAFT'&&has('routes.manage'))tools+=button('cancel','Annuler la tournée',kind,r.id);
+  return `${title(r.reference,`${r.service_date} · ${label(r.state)}`,actions(tools))}<div class="delivery-stop-list">${(x.items||[]).map(i=>`<article class="card delivery-stop"><div class="headline"><strong class="code">${i.position}. ${esc(i.tracking)}</strong>${badge(i.status)}</div><h2>${esc(i.recipient)}</h2><p>${esc(i.address)} · ${esc(i.city)}</p><p><strong>COD : ${money(i.cod_centimes)}</strong></p><p class="tiny muted">${i.fragile?'Fragile · ':''}${i.allow_open?'Ouverture autorisée par le marchand':'Ouverture non autorisée'}</p><div class="actions"><a class="btn outline" href="tel:${esc(i.phone.replace(/[^+0-9]/g,''))}">☎ ${esc(i.phone)}</a>${r.state==='ACTIVE'&&i.state==='PENDING'?button('attempt','Enregistrer la tentative','shipment',i.shipment_id,false):badge(i.state)}</div></article>`).join('')}</div>`;
+ }
+ return empty();
+}
+export async function workflowAction(action,el){
+ if(!action.startsWith('wf-'))return false;const key=action.slice(3),kind=el.dataset.kind,id=el.dataset.id;
+ if(key==='refresh'){await c.refresh();return true;}
+ if(key==='back'){c.state.workflowDetail=null;await c.refresh();return true;}
+ if(key==='view'){c.state.tab=kind;c.state.workflowDetail={kind,id};await c.refresh();return true;}
+ if(key==='transition'){const [section,verb]=kind.split('/');await call('/'+section+'/'+id+'/'+verb,{});await c.refresh();return true;}
+ if(key==='print'){window.open('/api/workflow/'+kind+'/'+id+'/print','_blank','noopener');return true;}
+ if(key==='read-all'){await call('/notifications/read',{});await c.refresh();return true;}
+ if(key==='notification'){const map={pickup:'pickups',return:'returns',claim:'claims',route:'routes',cash:'cash',adjustment:'adjustments'};c.state.tab=map[kind]||'shipments';c.state.workflowDetail=['pickup','return','claim','route'].includes(kind)?{kind:map[kind],id}:null;await call('/notifications/read',{});await c.refresh();return true;}
+ await workflowForm({c,call,has,label,table,esc},key,kind,id);return true;
+}
+export function wireWorkflows(){
+ document.querySelectorAll('[data-workflow-scan]').forEach(form=>form.addEventListener('submit',async e=>{e.preventDefault();const input=form.elements.scan,scan=input.value,button=form.querySelector('button');input.disabled=true;button.disabled=true;try{await call('/'+form.dataset.workflowScan+'/'+form.dataset.id+'/scan',{scan});c.toast('Scan accepté');await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;input.disabled=false;input.select();}document.querySelector('#workflow-scan-input')?.focus();}));
+ document.querySelector('#claim-reply')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),button=e.target.querySelector('button');button.disabled=true;try{await call('/claims/'+c.state.workflowDetail.id+'/messages',{message:f.get('message'),internal:f.get('internal')==='on'});await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}});
+ document.querySelector('#claim-upload')?.addEventListener('submit',async e=>{e.preventDefault();const file=e.target.elements.file.files[0];if(!file||file.size>1000000){c.toast('Choisissez une pièce de 1 Mo maximum',true);return;}const button=e.target.querySelector('button');button.disabled=true;try{const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);});await call('/claims/'+c.state.workflowDetail.id+'/attachments',{filename:file.name,mime:file.type,base64});await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;}});
+ document.querySelector('#workflow-settings')?.addEventListener('submit',async e=>{e.preventDefault();try{await call('/settings',Object.fromEntries(new FormData(e.target)));c.toast('Paramètres enregistrés');await c.refresh();}catch(err){c.toast(err.message,true);}});
+}
