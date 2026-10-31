@@ -76,6 +76,16 @@ npm start
 
 Ouvrir http://localhost:3000, configurer la société une fois, puis villes, marchands, comptes et stock. Définir PUBLIC_BASE_URL sur l’origine réelle ; derrière HTTPS, activer COOKIE_SECURE=true. Base : data/delivery.sqlite.
 
+Dans GitHub Codespaces, le serveur détecte le lien HTTPS du port à partir des variables de l’environnement Codespaces si PUBLIC_BASE_URL est vide ou conserve la valeur locale du fichier exemple. Le démarrage affiche `Browser origin` : c’est l’origine exacte autorisée pour les formulaires et les tickets. Une URL publique explicitement configurée reste prioritaire. Aucun en-tête Host/X-Forwarded-Host reçu du navigateur ne détermine cette autorisation.
+
+Si un serveur déjà démarré répond « Origine non autorisée », l’arrêter avec Ctrl+C puis le relancer avec l’origine exacte copiée depuis la barre d’adresse de l’application, sans chemin ni paramètres :
+
+```bash
+PUBLIC_BASE_URL="https://votre-application.example" npm start
+```
+
+Recharger ensuite l’application. Modifier le fichier .env ou un export dans un autre terminal ne change pas la configuration d’un processus déjà démarré.
+
 ```bash
 npm run check
 ```

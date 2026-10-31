@@ -14,6 +14,7 @@ import { logisticsRoute,reserveItems } from './logistics.mjs';
 import {workflowRoute} from './workflows.mjs';
 import {PERMISSIONS,ROLE_LABELS,ROLES,has,requirePermission,requireShipmentAccess,shipmentScope,agencyScoped,requireAgency} from './access.mjs';
 import {recordCodReceipt} from './delivery.mjs';
+import {publicBaseUrl} from './environment.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../public');
 const roles=PERMISSIONS;
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
@@ -22,7 +23,7 @@ const fail=(status,message)=>Object.assign(new Error(message),{status});
 const utf8=new TextDecoder('utf-8',{fatal:true});
 const mregex=(path,re)=>path.match(re);
 
-export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SESSION_SECRET||randomBytes(40).toString('hex'),secureCookies=process.env.COOKIE_SECURE==='true',sameOrigin=process.env.PUBLIC_BASE_URL||'http://localhost:3000'}={}){
+export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SESSION_SECRET||randomBytes(40).toString('hex'),secureCookies=process.env.COOKIE_SECURE==='true',sameOrigin=publicBaseUrl()}={}){
  const loginAttempts=new Map();
  const stmt=(q,...args)=>db.prepare(q).get(...args);
  const all=(q,...args)=>db.prepare(q).all(...args);
@@ -413,5 +414,6 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  }
  const secret=process.env.SESSION_SECRET||randomBytes(40).toString('hex');
  if(!process.env.SESSION_SECRET)console.warn('Ephemeral session secret: sessions reset on restart. Do not use in production.');
- const {server}=buildServer({db:openDb(),sessionSecret:secret});server.listen(port,host,()=>console.log(`TransitFlow Delivery listening at http://${host}:${port}`));
+ const base=publicBaseUrl();
+ const {server}=buildServer({db:openDb(),sessionSecret:secret,sameOrigin:base});server.listen(port,host,()=>{console.log(`TransitFlow Delivery listening at http://${host}:${port}`);console.log(`Browser origin: ${base}`);});
 }
