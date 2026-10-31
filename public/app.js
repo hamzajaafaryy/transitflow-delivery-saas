@@ -182,7 +182,7 @@ async function action(a,el){
   m.querySelector('form').onsubmit=async e=>{e.preventDefault();try{await api(`/shipments/${sh.id}/status`,{method:'POST',data:formData(e.target)});m.remove();toast('Statut mis à jour');await refresh();}catch(err){toast(err.message,true);}};return;
  }
  if(a==='collect-cod'){
-  const eligible=state.shipments.filter(s=>s.status==='DELIVERED'&&s.cod_centimes>0);
+  const eligible=state.shipments.filter(s=>s.status==='DELIVERED'&&s.cod_centimes>0&&!s.cod_collected&&!s.cod_receipt_state);
   const m=modal('Confirmer une collecte COD',`<form class="form">${field('Commande livrée','shipmentId',{options:eligible.map(s=>({value:s.id,label:`${s.tracking} · ${money(s.cod_centimes)}`}))})}<p class="note">À utiliser uniquement après avoir vérifié l'encaissement réel. Cette action ne correspond pas au versement au marchand.</p><button class="btn" ${eligible.length?'':'disabled'} type="submit">Confirmer la collecte</button></form>`);
   m.querySelector('form').onsubmit=async e=>{e.preventDefault();try{await api('/ledger/collect',{method:'POST',data:formData(e.target)});m.remove();toast('Collecte enregistrée');await refresh();}catch(err){toast(err.message,true);}};return;
  }

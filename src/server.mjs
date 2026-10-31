@@ -185,7 +185,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    }
    const user=requireSession(req);
    const companyId=user.company_id;
-   if(path.startsWith('/api/workflow/'))return await workflowRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});
+   if(path.startsWith('/api/workflow/')){const result=await workflowRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});if(result===false)throw fail(404,'Route de workflow introuvable');return;}
    if(path==='/api/cities'||path.startsWith('/api/agencies')||path.startsWith('/api/dispatches')||path.startsWith('/api/operations/')||/^\/api\/shipments\/[a-f0-9-]{36}\/preparation$/.test(path))return await logisticsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json});
    if(path.startsWith('/api/merchant/')||path.startsWith('/api/finance/merchant-')){
     return await merchantRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});
