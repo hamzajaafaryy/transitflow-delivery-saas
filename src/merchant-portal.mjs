@@ -115,6 +115,13 @@ function overview(ctx,merchantId,params){
   warning:'Livré ne signifie pas encaissé. Les sommes « à verser » sont un suivi interne, pas un virement bancaire. Tarifs non configurés = net indisponible.'};
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));}
+function printDeliveryReport(ctx,merchantId,params){
+ const window=businessWindow(params),merchant=ctx.stmt('SELECT name FROM merchants WHERE id=? AND tenant_id=?',merchantId,ctx.tenant),company=ctx.stmt('SELECT name FROM companies WHERE id=?',ctx.tenant);
+ if(!merchant)throw bad(404,'Marchand introuvable');
+ const deliveries=deliveredRows(ctx,merchantId,window),cash=n=>(n/100).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2})+' MAD';
+ const gross=deliveries.reduce((s,d)=>s+d.codCentimes,0),collected=deliveries.filter(x=>x.collected).reduce((s,d)=>s+d.codCentimes,0),unknown=deliveries.filter(x=>x.feeCentimes===null).length;
+ return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rapport de livraisons ${esc(window.label)}</title><style>body{font:13px Arial,sans-serif;color:#1c2a40;padding:25px}header{display:flex;justify-content:space-between;border-bottom:3px solid #4e70df;padding-bottom:17px}h1{margin:0 0 7px}table{width:100%;border-collapse:collapse;margin:24px 0}td,th{border-bottom:1px solid #e2e8f0;padding:11px;text-align:left}th{background:#f3f6fb}p{line-height:1.7}.muted{color:#64748b}.right{text-align:right}strong{color:#111827}.totals{margin-left:auto;max-width:370px}.totals p{display:flex;justify-content:space-between}.print{padding:9px 14px;margin-bottom:14px}.warning{background:#fff5df;padding:11px;border-radius:8px}@media print{.print{display:none}body{padding:0}}</style></head><body><button class="print" onclick="window.print()">Imprimer / Enregistrer en PDF</button><header><div><h1>TransitFlow</h1><strong>${esc(company?.name)}</strong><p class="muted">Rapport des livraisons confirmées</p></div><div class="right"><strong>${esc(merchant.name)}</strong><p>${esc(window.label)}</p><p>${esc(window.period)}</p></div></header><p>Ce rapport liste les colis marqués « Livré » pendant la période indiquée. Il n'atteste ni d'un virement au marchand, ni d'une facture fiscale.</p><table><thead><tr><th>Tracking</th><th>Ville</th><th>Livré le</th><th class="right">COD</th><th class="right">Frais</th><th>Encaissement</th><th>Versement</th></tr></thead><tbody>${deliveries.map(d=>`<tr><td>${esc(d.tracking)}</td><td>${esc(d.city)}</td><td>${esc(d.deliveredAt?.slice(0,16).replace('T',' '))}</td><td class="right">${cash(d.codCentimes)}</td><td class="right">${d.feeCentimes===null?'À définir':cash(d.feeCentimes)}</td><td>${d.collected?'Confirmé':'À encaisser'}</td><td>${esc(d.statementStatus||'Non rapproché')}</td></tr>`).join('')}</tbody></table><div class="totals"><p>Livraisons <strong>${deliveries.length}</strong></p><p>COD total <strong>${cash(gross)}</strong></p><p>COD encaissé confirmé <strong>${cash(collected)}</strong></p><p>Tarifs manquants <strong>${unknown}</strong></p></div>${unknown?'<p class="warning">Certains tarifs sont manquants. Aucun montant net de versement n’est calculé sans accord tarifaire.</p>':''}<p class="muted">Généré par TransitFlow · Montants à rapprocher du relevé de règlement validé.</p></body></html>`;
+}
 function printStatement(ctx,merchantId,statementId){
  const st=ctx.stmt(`SELECT ms.*,m.name AS merchant_name,c.name AS company_name FROM merchant_statements ms
  JOIN merchants m ON m.id=ms.merchant_id AND m.tenant_id=ms.tenant_id
@@ -134,6 +141,11 @@ export async function merchantRoute(ctx){
  }
  if(method==='GET'&&path==='/api/merchant/stock'){
   const merchantId=scopedMerchant(ctx,url.searchParams.get('merchantId'));return send(res,200,stockRows(ctx,merchantId));
+ }
+ if(method==='GET'&&path==='/api/merchant/deliveries/print'){
+  const merchantId=scopedMerchant(ctx,url.searchParams.get('merchantId'));
+  const html=printDeliveryReport(ctx,merchantId,url.searchParams);
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});return res.end(html);
  }
  if(method==='GET'&&path==='/api/merchant/statements'){
   const merchantId=scopedMerchant(ctx,url.searchParams.get('merchantId'));return send(res,200,{statements:statementList(ctx,merchantId)});

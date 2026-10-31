@@ -65,6 +65,8 @@ test('previous day reports and payout statements separate DELIVERED from collect
   assert.equal((await t.request('/api/ledger/collect',{method:'POST',data:{shipmentId:shipment.value.id}})).status,201);
   const ready=await t.request('/api/merchant/overview?'+period,{as:'merchant'});assert.equal(ready.value.summary.collectedReadyForStatementCentimes,17000);
   const st=await t.request('/api/finance/merchant-statements',{method:'POST',data:{merchantId:m,date}});assert.equal(st.status,201,JSON.stringify(st.value));assert.equal(st.value.netCentimes,17000);
+  const printed=await t.request('/api/merchant/deliveries/print?'+period,{as:'merchant'});
+  assert.equal(printed.status,200);assert.match(printed.value,/Rapport des livraisons/);assert.match(printed.value,/Casablanca/);
   assert.equal((await t.request('/api/finance/merchant-statements',{method:'POST',data:{merchantId:m,date}})).status,409);
   const preview=await t.request('/api/merchant/statements',{as:'merchant'});assert.equal(preview.value.statements[0].status,'DRAFT');
   const html=await t.request(`/api/merchant/statements/${st.value.id}/print`,{as:'merchant'});assert.equal(html.status,200);assert.match(html.value,/17[\s\u00a0\u202f]?0?[,\.]00 MAD/);assert.ok(!html.value.includes('<script>'));
