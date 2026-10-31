@@ -1,120 +1,105 @@
-# API — TransitFlow MVP (v0.1)
+# TransitFlow API — société unique, agences et envois (v0.5)
 
-All endpoints are under `/api`. The UI requests authenticate with an HttpOnly `dn_session` cookie plus header `X-Requested-With: delivery-ui` for any mutation. Partner status sync uses `Authorization: Bearer <partner_api_key>` and does **not** use a session. Request and response bodies use JSON except file upload and XLSX download.
+Les routes sont préfixées `/api`. Les requêtes navigateur utilisent le cookie HttpOnly `dn_session`. Toute mutation navigateur requiert `X-Requested-With: delivery-ui` et, si présent, un `Origin` identique à `PUBLIC_BASE_URL`. La synchronisation agence utilise un Bearer distinct. JSON sauf import binaire, export XLSX et documents HTML.
 
-## Integration with an external delivery company
+## Configuration et comptes
 
-An admin first adds a partner using `POST /api/partners`, and securely shares the generated `apiKey` with an integration operator. The key is shown only at creation (or rotation). It is hashed in the DB and is restricted to shipments assigned to that partner within one tenant.
+| Méthode | Route | Description |
+| --- | --- | --- |
+| GET | `/auth/setup` | `{setupRequired,companyName}` |
+| POST | `/auth/setup` | Configuration initiale unique : `{companyName,fullName,email,password}` ; ensuite HTTP 409 |
+| POST | `/auth/login` | `{email,password}` ; aucun code société |
+| POST | `/auth/logout` | Efface le cookie |
+| GET | `/me` | Utilisateur, société et permissions |
+| GET/POST | `/users` | Lecture opérations/admin ; création admin |
+| GET/POST | `/merchants` | Comptes clients de la société, opérations/admin |
 
-**Incoming webhook / push** (generic protocol, to be adapted to partner API):
+`POST /auth/register` retourne 410. Il n’existe ni inscription d’une autre société ni facturation SaaS.
 
-```http
-POST /api/integrations/status HTTP/1.1
-Authorization: Bearer dn_***
-Content-Type: application/json
+## Agences et villes
 
+| Méthode | Route | Description |
+| --- | --- | --- |
+| GET | `/cities` | Villes configurées, accessibles aux comptes connectés |
+| GET | `/agencies` | Liste opérations/admin |
+| POST | `/agencies` | Admin : `{name,city,kind:"PARTNER" ou "INTERNAL",operatorName?,contact?,fee}` ; fee en MAD ; clé retournée une fois |
+| PATCH | `/agencies/:id` | Admin : nom, fee, contact, operatorName ; ville fixe |
+| POST | `/agencies/:id/rotate-key` | Admin ; révoque immédiatement l’ancienne clé |
+| POST | `/agencies/:id/status-map` | Admin : `{map:{STATUT_EXTERNE:"IN_TRANSIT"}}` |
+
+Une seule agence par ville normalisée (casse, espaces et accents). Exemple : Tanger, coût agence 20 MAD. Le coût agence et le tarif marchand sont indépendants.
+
+## Commandes et préparation
+
+```json
 {
-  "eventId": "oscario-event-74913",
-  "tracking": "DNTEST20260001",
-  "externalTracking": "OSC-58392",
-  "status": "RAMASSE"
+  "recipient": "Client",
+  "phone": "0612345678",
+  "city": "Tanger",
+  "address": "Rue 12",
+  "cod": 199,
+  "source": "STOCK",
+  "items": [{"productId": "UUID", "quantity": 2}]
 }
 ```
 
-Response:
+`source` vaut `EXTERNAL` (sans produits) ou `STOCK` (1 à 20 produits distincts). Sans source explicite, la présence de produits détermine STOCK. Création et réservation FIFO sont atomiques ; une rupture retourne 409 et annule la commande. Le serveur détermine le marchand depuis sa session et l’agence depuis la ville. Les comptes marchands ne peuvent fournir une affectation agence/livreur ou un autre marchand.
 
-```json
-{"ok":true,"tracking":"DNTEST20260001","status":"PICKED_UP"}
-```
+| Méthode | Route | Description |
+| --- | --- | --- |
+| GET/POST | `/shipments` | Commandes ; lectures filtrées par rôle, 300 derniers résultats |
+| GET | `/shipments/:id` | Détail, événements et remarques internes selon rôle |
+| PATCH | `/shipments/:id` | Corrections avec reason ; COD admin uniquement ; ville non modifiable après ramassage ; contenu d’un container ouvert/fermé protégé |
+| POST | `/shipments/:id/notes` | Remarque opérations/admin |
+| POST | `/shipments/assign` | `{shipmentId,driverId?}` ; aucune progression automatique de statut |
+| POST | `/shipments/:id/status` | Transitions contrôlées ; les étapes ramassage et départ passent par leurs actions dédiées |
+| GET | `/shipments/:id/ticket` | HTML privé 100 × 150 mm, Code128 et QR |
+| GET | `/shipments/:id/preparation` | Opérations/admin : bon stock avec SKU/quantités/emplacements, ou bon livraison externe |
+| GET | `/operations/queue` | Préparation et colis ramassés, maximum 1000 ; scan direct disponible au-delà |
+| POST | `/operations/ramassage` | `{scan:"tracking ou UUID ou URL QR"}` ; réception et sortie FIFO atomiques pour STOCK |
+| GET | `/tracking/:tracking` | Suivi public sans destinataire, téléphone, adresse exacte ou COD |
+| GET | `/suivi/:tracking` | Page HTML publique, sans préfixe `/api` |
 
-If `eventId` is repeated, the server returns `{"ok":true,"duplicate":true,...}` and does not create a duplicate event. State changes are tenant-scoped and validated. Stale/reversed terminal events return HTTP 409. Invalid credentials return 401. Unmapped status: 422. Other common statuses: `EN_COURS` → `IN_TRANSIT`, `EN_LIVRAISON` → `OUT_FOR_DELIVERY`, `LIVRE` → `DELIVERED`, `REFUSE` → `REFUSED`, `RETOUR` → `RETURNING`.
+Un deuxième scan ramassage retourne `duplicate:true` sans nouvelle sortie de stock. Les corrections après départ restent marquées `pending_agency_update` et demandent transmission à l’agence ; aucune propagation sortante automatique n’est promise.
 
-Many partner systems **do not support an outgoing webhook**, and may require *our server* to poll their API. That connector is not implemented yet. Do not assume this endpoint alone automatically connects to Oscario: their real API docs, auth, rate limits and permission must be verified.
+## Containers / bons d’envoi par ville
 
-Admin may set custom partner status aliases:
+| Méthode | Route | Description |
+| --- | --- | --- |
+| GET | `/dispatches` | 200 derniers envois, avec compteurs expected/scanned |
+| POST | `/dispatches` | `{agencyId,shipmentIds?}` ; instantané des colis ramassés non encore affectés ; maximum 2000 ; un container OPEN par agence |
+| GET | `/dispatches/:id` | `{dispatch,items,summary:{expected,scanned,missing}}` |
+| POST | `/dispatches/:id/scan` | `{scan}` ; contrôle ville/agence/ramassage/lot ; doublons refusés en 409 |
+| POST | `/dispatches/:id/close` | `{}` ; exige tous les attendus scannés ; état CLOSED |
+| POST | `/dispatches/:id/export` | `{}` ; XLSX du seul container CLOSED/SHIPPED ; aucune transition de livraison |
+| POST | `/dispatches/:id/ship` | `{}` ; départ physique explicite après fermeture ; SHIPPED et colis IN_TRANSIT |
+| POST | `/dispatches/:id/cancel` | `{reason}` ; OPEN/CLOSED seulement ; libère les colis sans effacer leur ramassage/stock |
+
+Un colis ramassé après l’ouverture est destiné à un prochain lot. Les tarifs sont figés dans chaque container. Colonnes XLSX : `Tracking, Destinataire, Téléphone, Adresse, Ville, COD, Description`. Les modèles propres au logiciel de l’agence nécessitent une adaptation.
+
+## Suivi entrant des agences
 
 ```http
-POST /api/partners/<partner-id>/status-map
-X-Requested-With: delivery-ui
+POST /api/integrations/status
+Authorization: Bearer dn_...
 Content-Type: application/json
-Cookie: dn_session=...
 
-{"map":{"RECU_DEPOT":"PICKED_UP","EN_COURS_RETOUR":"RETURNING"}}
+{"eventId":"agence-123","tracking":"TF...","status":"EN_LIVRAISON"}
 ```
 
-Admin may rotate a compromised API key with `POST /api/partners/<partner-id>/rotate-key` (the previous key is immediately invalid).
+La clé n’autorise que les colis affectés à son agence. Pour les nouvelles commandes, ramassage et départ de container doivent être confirmés avant les événements de destination. Mappings : `EN_COURS` → IN_TRANSIT, `EN_LIVRAISON` → OUT_FOR_DELIVERY, `LIVRE` → DELIVERED, etc. Un scan d’arrivée dans le hub peut être transmis comme EN_COURS ; il ne doit pas ramener un colis en transit à l’étape ramassage warehouse. `eventId` est unique par agence ; les répétitions retournent `duplicate:true`, les régressions 409.
 
-## Orders and companies
+## Stock et comptabilité conservés
 
-| Method | Endpoint | Action |
-|---|---|---|
-| POST | `/auth/register` | Create a company and its first admin. |
-| POST | `/auth/login` | Log in using `{company,email,password}`. |
-| POST | `/auth/logout` | Log out. |
-| GET | `/me` | Current user/company. |
-| GET | `/stats` | Status statistics, scoped to role. |
-| GET | `/shipments` | Tenant shipments, role-scoped. |
-| POST | `/shipments` | Create shipment; fields `recipient, phone, city, address, cod, partnerId?`, etc. |
-| POST | `/shipments/assign` | Assign manually `{shipmentId,partnerId}` or `{shipmentId,driverId}`. |
-| POST | `/shipments/<id>/status` | Internal updates with `{status,note?}`. Driver only for own shipments. |
-| GET | `/tracking/<tracking>` | Sanitized public tracking view. |
-| GET/POST | `/partners` | List/create external partners. |
-| POST | `/partners/<id>/export` | XLSX manifest generation and state `EXPORTED`. |
-| GET | `/manifests` | Export history. |
-| POST | `/import/orders` | Binary CSV/XLSX (with corresponding Content-Type). |
-| GET/POST | `/users` | Employee list, create role-scoped user (admin only for creation). |
-| GET/POST | `/merchants` | Merchant list/create. |
-| GET | `/ledger` | COD journal. |
-| POST | `/ledger/collect` | Confirm COD for delivered shipment once. |
-| GET | `/billing/usage` | Tenant monthly SaaS usage counts, billing inactive. |
-| GET | `/inventory` | Products with available/reserved/physical stock. |
-| POST | `/inventory/products` | Create product `{sku,name}`. |
-| POST | `/inventory/receive` | Receive stock `{productId,quantity,location?}`. |
-| POST | `/inventory/reserve` | Reserve stock FIFO `{shipmentId,productId,quantity}`. |
-| POST | `/inventory/dispatch` | Dispatch reservations for a shipment. |
+- `GET /inventory`, `POST /inventory/products {sku,name,merchantId?}`, `POST /inventory/receive {productId,quantity,location?}`.
+- `POST /inventory/reserve {shipmentId,productId,quantity}` : réservation manuelle avant ramassage, transforme le colis en commande stock.
+- `POST /inventory/dispatch` retourne 410 : utiliser le scan ramassage pour la sortie physique.
+- `POST /import/orders` : CSV/XLSX binaire, 4 Mo et 1000 lignes maximum ; validation des villes et rapport des doublons/erreurs.
+- `GET /merchant/overview?period=yesterday|today|24h|date&date=AAAA-MM-JJ`, `/merchant/stock`, `/merchant/statements` ; filtrés sur le marchand connecté. Admin/finance ajoutent `merchantId`.
+- `POST /merchant/orders` : création marchand utilisant la même transaction de commande/réservation.
+- `GET /merchant/deliveries/print?period=yesterday|today|24h|date&date=AAAA-MM-JJ` : rapport des livraisons de la période, imprimable.
+- `GET /merchant/statements/:id/print` : relevé privé imprimable, pas une facture fiscale.
+- `GET /finance/merchant-list`, `GET/POST /finance/merchant-rates`, `POST /finance/merchant-product-owner` (admin), `POST /finance/merchant-statements`, `POST /finance/merchant-statements/:id/confirm`, `/mark-paid`.
+- `POST /ledger/collect {shipmentId}` : COD confirmé manuellement après livraison, une fois ; `GET /ledger` : journal.
 
-## Excel export
-
-The standard XLSX columns are:
-
-```
-Tracking | Destinataire | Téléphone | Adresse | Ville | COD | Description
-```
-
-The partner's own system may need a **different column order or label names**. Per-partner template designer and custom converters are on the roadmap; no guarantee that this default workbook can be imported in Oscario without adjustment. An XLSX export changes orders to `EXPORTED`, **not** `PICKED_UP`.
-
-## Trust boundaries
-
-- `tenant_id` must always be drawn from the authenticated session, not from user-submitted JSON.
-- Partner Bearer key identifies a single external carrier **within a single company**; only this carrier's assigned shipments can be updated.
-- Trackings may be duplicated across independent tenants; public tracking refuses to return ambiguous results.
-- The finance journal logs manual COD confirmation but does not yet implement double-entry accounting or inter-company settlements.
-
-## Parcels — details, notes, corrections and printing (pilot v0.2)
-
-All routes except the public tracking page require a signed `dn_session` cookie;
-mutation routes also require `X-Requested-With: delivery-ui` and same-origin protection.
-Every parcel lookup is scoped by `tenant_id` and the authenticated role.
-
-- `GET /api/shipments/:id` — parcel, events, COD collection flag, and (for operations/admin) internal notes.
-- `POST /api/shipments/:id/notes` — internal operations/admin note; body `{ "message": "..." }`.
-- `PATCH /api/shipments/:id` — operations/admin correction, with a mandatory `reason` (5+ characters). Allowed fields: `recipient`, `phone`, `city`, `address`, `description`; `cod` is ADMIN only. Changing tracking, tenant, source or partner using this endpoint is rejected. Corrections after external Excel export set `pending_partner_update=1`. **This flag is not cleared automatically by tracking events.**
-- `GET /api/shipments/:id/ticket` — private HTML shipping label with Code128 barcode and QR code linking to public tracking. Fits a 100 x 150 mm label; use the browser Print / Save as PDF action.
-- `GET /suivi/:tracking` — public HTML status timeline (no recipient name, phone, address or COD).
-
-The label does **not** imply opening the package is authorized; the pilot prints "OUVERTURE NON PRÉCISÉE" until an explicit company rule is implemented.
-
-### Partner correction limitations
-
-A local change to a shipment already exported to a partner must be transmitted
-and acknowledged through the partner's real integration or manual workflow.
-The current pilot does not implement that outbound API. Operators see a
-`Modification à transmettre` warning to avoid claiming a correction has already
-been applied by the external company.
-
-### Security and production notice
-
-This is a local pilot. The public tracking endpoint intentionally exposes only
-limited logistics data, but real deployment should add enumeration resistance,
-rate limiting, tenant-specific public tracking links, and a production-grade
-identity and storage setup. Do not upload customer data to the standalone UI demo.
+Livraison, encaissement COD et paiement marchand restent trois opérations distinctes. Les relevés utilisent le calendrier `Africa/Casablanca`. Aucun endpoint ne déclenche un virement réel.

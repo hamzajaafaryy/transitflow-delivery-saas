@@ -1,120 +1,82 @@
-# TransitFlow — Delivery Network SaaS (MVP)
+# TransitFlow — Gestion d’une société de livraison
 
-**Statut : prototype fonctionnel pour test local, PAS un service SaaS prêt à commercialiser.**
+TransitFlow gère **une seule société de livraison** et son réseau d’**agences / hubs par ville**. Les marchands sont les clients de cette société. Un partenaire local est enregistré comme une agence de destination, pas comme une société indépendante pouvant s’inscrire sur la plateforme.
 
-Une base de projet en français, multi-sociétés (tenants) pour la livraison au Maroc. Les sociétés de transport externes (ex. Oscario à Tanger) **gardent leurs propres logiciels** : nous exportons des bordereaux Excel XLSX pour import chez elles et elles communiquent les changements de statut par API. Le livreur interne utilise **le même site web** avec son compte et une interface mobile dédiée, sans application séparée.
+Version 0.5 : prototype fonctionnel, avec préparation warehouse, ramassage au scan et containers par ville. Les relevés marchands, versements suivis en interne et vues de stock de la version 0.4 sont conservés.
 
-## Fonctionnalités réellement implémentées
+## Organisation
 
-- Inscription d'une société indépendante, connexion à l'aide de **code société + email + mot de passe**, session HttpOnly SameSite, rôles `ADMIN`, `OPERATIONS`, `DRIVER`, `MERCHANT`, `FINANCE`.
-- Cloisonnement des lectures et écritures par `tenant_id` dans les requêtes du backend ; contrôles de permissions.
-- Colis : création, suivi interne, attribution **manuelle** aux partenaires (plusieurs transporteurs par ville) ou aux livreurs internes, historique des statuts.
-- Sociétés partenaires : villes couvertes, tarifs indicatifs, contacts, accès API distinct par partenaire, rotation de la clé et mapping de statuts via API.
-- Import **CSV et XLSX**, avec validation, prévention des doublons, rapport des erreurs. Export Excel XLSX avec manifest enregistré, pour envoi **manuel** via WhatsApp à un partenaire.
-- Scan externe : endpoint API authentifié ; les événements `RAMASSE`, `EN_COURS`, `EN_LIVRAISON`, `LIVRE`, etc. actualisent automatiquement le colis **si le système externe les envoie**. Idempotence via `eventId` ; rejet des transitions régressives.
-- Espace livreur mobile dans le même site (liste des colis qui lui sont attribués, téléphone, mise à jour de statuts).
-- Espace marchand basé sur le `merchant_id` explicite. Consultations limitées aux colis de ce marchand.
-- Suivi public par numéro de tracking à forte entropie (sans téléphone, adresse complète ou COD) ; masquer le suivi si même tracking présent chez plusieurs tenants.
-- Stock / fulfillment : création SKU, réception de lots, quantités disponibles/réservées, réservation FIFO transactionnelle et sortie du stock après préparation.
-- Finance initiale : collecte COD confirmée manuellement sur une commande `DELIVERED`, entrée de journal non duplicable. **Pas encore de règlement ou rapprochement complet**.
-- Metering SaaS : volume mensuel de commandes / événements partenaire / exports. **Les abonnements payants ne sont pas encore activés.**
-- Tests automatiques API, permissions, isolation multi-tenant, XLSX et FIFO (sans accès Internet ni packages externes).
+- Configuration initiale unique de la société et de son administrateur.
+- Connexion par **email + mot de passe**, sans code société ni inscription multi-sociétés.
+- Rôles `ADMIN`, `OPERATIONS`, `DRIVER`, `MERCHANT`, `FINANCE`.
+- Une agence / hub par ville, interne ou partenaire : nom, ville, opérateur, contact et coût de livraison.
+- Exemple : **Agence Tanger**, opérateur local, **20 MAD par colis livré**. Ce coût est distinct du tarif facturé au marchand.
+- Ajout des villes et modification des tarifs par l’administrateur. Les commandes utilisent les villes configurées et sont automatiquement rattachées au hub de destination.
 
-## Prérequis
+## Parcours physique d’un colis
 
-- **Node.js 22.13+** (module `node:sqlite` expérimental dans Node 22)
-- **Python 3** dans `PATH`, uniquement pour conversion XLSX (script standard library)
-- Aucun `npm install` nécessaire dans ce prototype.
+1. **Commande marchand** : un colis `EXTERNAL` sera reçu du marchand ; une commande `STOCK` contient les produits à préparer depuis son stock en warehouse.
+2. **Bon de préparation** : bon de livraison pour un colis externe, ou bon stock avec SKU, quantités et emplacements. Imprimer le ticket 100 × 150 mm, avec destinataire, adresse, téléphone, tracking, Code128 et QR.
+3. **Préparation** : coller le ticket sur le colis. Les produits d’un bon stock sont réservés en FIFO dès la création ; le stock physique n’est pas encore sorti.
+4. **Ramassage** : scanner le tracking ou l’ID dans `Préparation & ramassage`. Le colis devient `PICKED_UP`. Pour une commande stock, ce scan confirme la sortie physique des réservations, dans la même transaction. Un colis externe ne prélève aucun stock. Un nouveau scan du même ramassage ne fait pas une deuxième sortie.
+5. **Bon d’envoi par ville** : ouvrir un container pour l’agence. Il prend un instantané des colis ramassés encore disponibles pour cette destination ; une sélection explicite est aussi possible via API.
+6. **Tri au scan** : scanner chaque colis avant de le placer dans le carton/container de sa ville. Contrôle de la ville, de l’agence, du ramassage et de l’appartenance au lot. Une autre ville, un doublon, un colis non ramassé ou déjà réservé à un autre container sont refusés. Affichage `Attendus / Scannés / Restants`.
+7. **Fermeture** : possible uniquement quand tous les colis attendus sont scannés. L’Excel contient exclusivement ce container. Son téléchargement ne confirme pas un départ physique.
+8. **Départ** : après remise physique au transport, l’opérateur confirme le départ. Le container devient `SHIPPED`, ses colis `IN_TRANSIT`. Le tarif agence du container est conservé comme instantané.
+9. **Suivi** : l’agence peut transmettre ses événements API après le départ, avec une clé limitée à ses colis. Un adaptateur au logiciel réel du partenaire reste nécessaire.
 
-## Démarrer en local
+Un colis ramassé après l’ouverture appartient à un prochain lot. Pour reconstituer un lot avant départ, l’opérateur peut annuler son bon avec un motif puis ouvrir un nouveau container ; les colis sont libérés et les mouvements de stock restent enregistrés. Un envoi déjà expédié ne peut pas être annulé de cette manière.
+
+## Espace marchand et finance
+
+`/merchant.html` donne accès aux livraisons d’hier, des dernières 24 heures ou d’une date, aux relevés et à l’inventaire détaillé du marchand : SKU, quantités physiques/réservées/disponibles, lots, emplacements et allocations.
+
+Les commandes stock ne peuvent réserver que les produits appartenant au marchand authentifié. Une rupture annule toute la création et toutes les réservations de la commande.
+
+Le statut de livraison, l’encaissement COD et le versement marchand sont distincts. La comptabilité confirme le COD, configure les tarifs marchands, génère un relevé journalier, le valide puis enregistre une référence de versement. Ces relevés sont des documents de rapprochement interne ; ils ne déclenchent pas de virement bancaire et ne constituent pas des factures fiscales.
+
+## Démarrage local
+
+Prérequis : **Node.js 22.13+**, **Python 3** dans `PATH` pour XLSX. Aucune installation npm n’est nécessaire.
 
 ```bash
 cp .env.example .env
-# IMPORTANT : remplacez SESSION_SECRET par une chaîne générée aléatoirement
 node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
-# collez la valeur obtenue dans .env
+# Mettre cette valeur dans SESSION_SECRET de .env.
 npm start
 ```
 
-Ouvrez `http://localhost:3000` puis cliquez sur **Créer un compte société**. Créez un compte admin de votre société et un transporteur partenaire. Pour le livreur, créez un utilisateur de rôle `DRIVER`. Le livreur se connecte au **même URL**.
+Ouvrir `http://localhost:3000`, configurer la société une seule fois, se connecter puis ajouter les villes dans **Agences & hubs**. L’administrateur crée les marchands, les utilisateurs et le stock. Tous les rôles utilisent le même site ; le livreur dispose d’une vue mobile.
 
-En développement : `npm run dev` (Node avec watch). Pour les tests : `npm run check`.
-
-Le fichier `.env` est chargé via l'option native Node (voir `package.json`). La base locale est créée dans `data/delivery.sqlite` et ignorée par git.
-
-## Exemple : Casablanca → Oscario (Tanger)
-
-1. Admin crée le partenaire **Oscario**, choisit `Tanger` et copie **une seule fois** la clé API qui est générée.
-2. Crée les commandes et choisit Oscario comme transporteur (ou utilise **Affecter** sur des colis déjà créés).
-3. Dans **Transporteurs partenaires**, clique **Export XLSX**. Un bordereau `MAN-...` est créé, les colis passent à `EXPORTED`. Cela ne veut **PAS** dire que les colis ont été physiquement remis.
-4. L'employé envoie le fichier XLSX par WhatsApp, manuellement. Oscario importe le fichier dans son propre système.
-5. Le salarié d'Oscario scanne les barcodes. Une **intégration développée avec l'API réelle d'Oscario** envoie ensuite un changement de statut vers notre endpoint.
-6. Le colis devient `PICKED_UP` (Ramassé). Les autres statuts sont répercutés dans l'espace marchand et le suivi public.
-7. COD/versement reste séparé du statut de livraison : une commande livrée n'est pas automatiquement considérée comme encaissée ou payée au marchand.
-
-**IMPORTANT** : le connecteur Oscario n'est **pas branché**. Nous ne disposons pas encore de sa documentation API. Le protocole générique entrant fonctionne (voir `docs/API.md`) mais il faut un adaptateur qui mappe son authentification, son format, les identifiants et ses notifications.
-
-## Architecture et limitations
-
-```
-public/            UI responsive French, login, dashboards, PWA manifest
-src/server.mjs     HTTP API, auth, permission checks, business transactions
-src/db.mjs         SQLite schema multi-tenant (MVP local)
-src/domain.mjs     Shipment lifecycle, partner status mapping
-src/auth.mjs       Password hashing, signed session, API partner keys
-src/excel.mjs      Import CSV + bridge XLSX
-scripts/excel.py   Pure-stdlib ZIP/XML XLSX reader/writer
-tests/             Node tests
-examples/          Example Excel-compatible CSV
-docs/              Architecture, API, roadmap, production checklist
+```bash
+npm run dev
+npm run check
 ```
 
-This version intentionally uses dependency-free Node.js + SQLite to make the first working proof-of-concept testable here. **For production**, migrate to PostgreSQL, an audited/auth library with MFA and recovery, a background queue and jobs for integrations, object storage, monitoring and backup restores, proper tenant-level database RLS or per-tenant storage, and a payment provider for subscription billing. See `docs/ROADMAP.md`.
+La base locale est `data/delivery.sqlite`. Le fichier `.env` et les données ne sont pas versionnés. Pour le QR des tickets, définir `PUBLIC_BASE_URL` sur l’origine réelle ; activer `COOKIE_SECURE=true` derrière HTTPS.
 
-## Security / confidentiality
+## Architecture
 
-- `SESSION_SECRET` must be strong and persistent. Never commit `.env` or `data/`.
-- If deployed behind HTTPS proxy, set `PUBLIC_BASE_URL=https://your-domain` and `COOKIE_SECURE=true`.
-- Browser mutation requests use same-origin protection, a custom anti-CSRF header and SameSite cookies; API partners use independent Bearer keys stored as hashes.
-- The public tracking endpoint has no rate limiting in the MVP. Do not expose publicly without abuse controls and threat review.
-- This prototype does not have full privacy/compliance features, MFA, password reset, backups, anti-fraud, reliable financial ledger, and payment collection/settlements.
-- **Do not use this pilot for real COD settlements or production customer data before a full review.**
+| Fichier | Responsabilité |
+| --- | --- |
+| `src/server.mjs` | Serveur HTTP, configuration unique, sessions, commandes, permissions, import et COD |
+| `src/logistics.mjs` | Agences, préparation, FIFO, ramassage, containers, scans, Excel et départ |
+| `src/db.mjs` | Schéma SQLite et migration transactionnelle des anciennes bases |
+| `src/merchant-portal.mjs` | Stock marchand, périodes Maroc, tarifs, relevés et versements |
+| `src/domain.mjs` | Statuts, transitions et normalisation des villes |
+| `src/ticket.mjs` | Ticket Code128 / QR et suivi public limité |
+| `src/excel.mjs`, `scripts/excel.py` | Import CSV et lecture/écriture XLSX sans dépendances |
+| `public/app.js`, `public/operations.js` | Interface principale, ramassage et tri par ville |
+| `public/merchant.js` | Portail marchand avec stock et relevés |
 
-© Project source is provided to the user for further development. No third-party logos or branding included.
+## Migration depuis la version 0.4
 
-## Colis workflow — update v0.2
+La migration conserve les commandes, utilisateurs, marchands, stock, événements, tarifs et relevés. Elle renomme les anciennes tables/colonnes de sociétés et partenaires vers le modèle société unique / agences. Un ancien transporteur couvrant plusieurs villes est décliné en agences par ville. Les anciens exports restent en base comme archives.
 
-The authenticated **Gestion des colis** now includes role-scoped actions:
-parcel information, chronological status events, internal remarks, controlled
-corrections, COD price changes (company ADMIN only), and 100 × 150 mm printable
-shipping tickets. The ticket embeds an offline-generated Code128 barcode and a
-QR code leading to a redacted public tracking timeline.
+La base refuse une migration contenant plusieurs sociétés indépendantes, ou plusieurs agences historiques pour une même ville, au lieu de fusionner ou supprimer des données. Toute la migration est transactionnelle. Utiliser une sauvegarde et une base dédiée à la société. Les colonnes historiques `slug` et `plan` restent internes pour la compatibilité des bases, sans sélection de société ni abonnement dans le produit.
 
-On small screens, orders render as responsive cards rather than a wide table.
-The `PAYMENT` indicator refers specifically to **confirmed COD collection**, not
-merchant payout or inter-company settlement. Corrections made after an Excel
-partner export are marked `Modification à transmettre` until reconciled; this
-version does not yet push edits to an external partner's API.
+## Vérification et limites
 
-For usable printed QR links outside localhost, set `PUBLIC_BASE_URL` to the
-actual HTTPS origin during deployment. Browser Print / Save as PDF is used;
-there is no dedicated server-side PDF renderer.
+`npm run check` vérifie la syntaxe et les tests API/domaine/migration : société unique, permissions marchand/livreur, stock FIFO et annulation, ramassage sans double sortie, mauvais container, doublons, colis manquants, instantanés de tarifs, Excel, départ, événements agence, relevés et migration sans perte.
 
-The Code128 encoder is implemented locally; the QR encoder carries a vendored
-MIT-licensed Kazuhiko Arase implementation under `src/vendor/qrcode/` with its
-licence notice. New server integration tests cover tenant isolation for labels,
-HTML escaping, role permissions, price edits, and partner update flags.
-
-## Espace marchand enrichi — v0.4 (Livraisons 24h, relevés, stock détaillé)
-
-- Ouvrir `/merchant.html` après connexion avec un compte marchand. Le comptable peut accéder au même écran pour consulter un marchand, configurer des tarifs et préparer un relevé.
-- Rapport `Hier`, `24 heures`, `Aujourd'hui` ou date précise en fuseau **Africa/Casablanca** : colis livrés, COD déclaré, collecte confirmée, montant restant à collecter. Un statut « Livré » **ne prouve pas** le versement au marchand.
-- Tarification par marchand et ville (ou `*` pour un tarif par défaut), en centimes MAD. Aucun montant net n'est inventé si le tarif manque.
-- Relevés journaliers **brouillon → validé → marqué versé**. Les lignes sont une photographie immuable des colis livrés, COD encaissés et frais appliqués; un colis ne peut apparaître que dans un seul relevé. L'impression « Enregistrer en PDF » utilise le navigateur. **Un relevé ne constitue pas une facture fiscale, ni une preuve de virement bancaire.**
-- Inventaire marchand par SKU : quantité physique, quantité réservée, disponible, répartition par dépôt/emplacement, lots FIFO, allocations. Le marchand n'accède qu'à ses propres produits. Les SKU doivent être associés à son `merchant_id` lors de leur création; l'administrateur peut attribuer les anciens SKU non associés après vérification.
-- Le marchand peut créer une commande et réserver facultativement un SKU en FIFO dans la même transaction. Si le stock est insuffisant, la création de commande est annulée.
-- Tests : isolation des marchands, quantités FIFO, refus des sur-réservations, collecte COD, relevés et versements étape par étape.
-
-API : `GET /api/merchant/overview?period=yesterday|today|24h|date&date=AAAA-MM-JJ`, `GET /api/merchant/stock`, `GET /api/merchant/statements`, `POST /api/merchant/orders`, `GET /api/finance/merchant-list`, `POST /api/finance/merchant-rates`, `POST /api/finance/merchant-statements`, `POST /api/finance/merchant-statements/:id/confirm`, `POST .../:id/mark-paid`. L'API comptable est limitée à ADMIN/FINANCE. Voir les validations dans le code.
-
-**Limites MVP** : pas de virements automatiques, contrôle bancaire, factures fiscales ou rapprochement intercompagnies complet. Avant utilisation réelle des fonds COD, prévoir les contrôles comptables, une base PostgreSQL multi-tenant, des sauvegardes et une validation fiscale/juridique.
+Le prototype n’a pas de connecteur réel à un partenaire, de preuve signée de remise, d’application scanner matérielle spécifique, de rapprochement comptable agence complet, de paiement bancaire automatique, de MFA, de récupération de compte ou de sauvegardes gérées. Le scan utilise une douchette clavier avec Entrée ou la saisie du tracking/ID ; le scan caméra n’est pas implémenté. Les reprises/retours au stock et les règles avancées multi-colis restent à compléter avant exploitation réelle.

@@ -1,13 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import { canTransition,mapPartnerStatus,centimes } from '../src/domain.mjs';
+import { canTransition,mapAgencyStatus,centimes } from '../src/domain.mjs';
 import { hashPassword,verifyPassword,signToken,verifyToken } from '../src/auth.mjs';
 import { xlsx,rowsToOrders,parseCsv } from '../src/excel.mjs';
 test('statuts: external mapping and valid handover',()=>{
- assert.equal(mapPartnerStatus('ramassé'),'PICKED_UP');
- assert.equal(mapPartnerStatus('Livré'),'DELIVERED');
+ assert.equal(mapAgencyStatus('ramassé'),'PICKED_UP');
+ assert.equal(mapAgencyStatus('Livré'),'DELIVERED');
  assert.equal(canTransition('EXPORTED','PICKED_UP'),true);
  assert.equal(canTransition('DELIVERED','PICKED_UP'),false);
- assert.equal(mapPartnerStatus('UNKNOWN'),null);
+ assert.equal(mapAgencyStatus('UNKNOWN'),null);
 });
 test('money: centimes integer and invalid values',()=>{assert.equal(centimes('199.95'),19995);assert.throws(()=>centimes(-1));});
 test('auth: strong password & tamper-proof session',()=>{

@@ -25,9 +25,9 @@ export function qrSvg(text){
 }
 
 const fmtMoney=(cents)=>new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(cents||0)/100)+' DH';
-export function ticketHtml({shipment,company,merchantName='',partnerName='',trackingUrl}){
+export function ticketHtml({shipment,company,merchantName='',agencyName='',trackingUrl}){
  const sh=shipment, e=escapeHtml;
- const label=partnerName||'Livraison interne';
+ const label=agencyName||'Livraison interne';
  const qr=qrSvg(trackingUrl);
  const barcode=code128Svg(sh.tracking);
  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ticket ${e(sh.tracking)}</title>

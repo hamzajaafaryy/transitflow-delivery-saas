@@ -1,6 +1,6 @@
 import { scryptSync, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 export function hashPassword(password){
- if (typeof password!=='string'||password.length<12||password.length>128) throw Error('Mot de passe: 12 à 128 caractères requis');
+ if (typeof password!=='string'||password.length<12||password.length>128) throw Object.assign(Error('Mot de passe: 12 à 128 caractères requis'),{status:400});
  const salt=randomBytes(16).toString('hex');return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
 }
 export function verifyPassword(password,record){

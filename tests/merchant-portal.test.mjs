@@ -16,8 +16,9 @@ async function setup(){
   return {status:r.status,value};
  }
  const createAdmin=async(slug,as='admin')=>{
-  assert.equal((await request('/api/auth/register',{method:'POST',as,data:{companyName:slug,slug,fullName:'Boss',email:'boss@'+slug+'.ma',password:'a-strong-password-123'}})).status,201);
+  assert.equal((await request('/api/auth/setup',{method:'POST',as,data:{companyName:slug,slug,fullName:'Boss',email:'boss@'+slug+'.ma',password:'a-strong-password-123'}})).status,201);
   assert.equal((await request('/api/auth/login',{method:'POST',as,data:{company:slug,email:'boss@'+slug+'.ma',password:'a-strong-password-123'}})).status,200);
+  for(const city of ['Tanger','Casablanca'])assert.equal((await request('/api/agencies',{method:'POST',as,data:{name:'Agence '+city,city,fee:20}})).status,201);
  };
  const createMerchant=async(name,email,as)=>{
   const m=await request('/api/merchants',{method:'POST',data:{name}});assert.equal(m.status,201);
@@ -44,7 +45,7 @@ test('merchant stock is linked to actual merchant and warehouse and cannot leak 
   const insufficient=await t.request('/api/merchant/orders',{method:'POST',as:'soleil',data:{recipient:'Client B',phone:'0612345678',city:'Tanger',address:'Rue 2',cod:100,items:[{productId:product.value.id,quantity:6}]}});assert.equal(insufficient.status,409);
   const merchantOrders=await t.request('/api/shipments',{as:'soleil'});assert.equal(merchantOrders.value.shipments.length,1,'transaction should roll back order when insufficient');
   assert.equal((await t.request('/api/merchant/orders',{method:'POST',as:'lune',data:{recipient:'Client',phone:'0612345678',city:'Tanger',address:'Rue 9',items:[{productId:product.value.id,quantity:1}]}})).status,404);
-  assert.equal((await t.request('/api/merchant/orders',{method:'POST',as:'soleil',data:{recipient:'Client',phone:'0612345678',city:'Tanger',address:'Rue 9',partnerId:'fake'}})).status,403);
+  assert.equal((await t.request('/api/merchant/orders',{method:'POST',as:'soleil',data:{recipient:'Client',phone:'0612345678',city:'Tanger',address:'Rue 9',agencyId:'fake'}})).status,403);
   assert.equal((await t.request('/api/merchant/orders',{method:'POST',as:'soleil',data:{recipient:'Client',phone:'0612345678',city:'Tanger',address:'Rue 9',merchantId:b}})).status,403);
  }finally{await t.stop();}
 });
