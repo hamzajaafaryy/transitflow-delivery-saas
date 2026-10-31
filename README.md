@@ -81,3 +81,26 @@ This version intentionally uses dependency-free Node.js + SQLite to make the fir
 - **Do not use this pilot for real COD settlements or production customer data before a full review.**
 
 © Project source is provided to the user for further development. No third-party logos or branding included.
+
+## Colis workflow — update v0.2
+
+The authenticated **Gestion des colis** now includes role-scoped actions:
+parcel information, chronological status events, internal remarks, controlled
+corrections, COD price changes (company ADMIN only), and 100 × 150 mm printable
+shipping tickets. The ticket embeds an offline-generated Code128 barcode and a
+QR code leading to a redacted public tracking timeline.
+
+On small screens, orders render as responsive cards rather than a wide table.
+The `PAYMENT` indicator refers specifically to **confirmed COD collection**, not
+merchant payout or inter-company settlement. Corrections made after an Excel
+partner export are marked `Modification à transmettre` until reconciled; this
+version does not yet push edits to an external partner's API.
+
+For usable printed QR links outside localhost, set `PUBLIC_BASE_URL` to the
+actual HTTPS origin during deployment. Browser Print / Save as PDF is used;
+there is no dedicated server-side PDF renderer.
+
+The Code128 encoder is implemented locally; the QR encoder carries a vendored
+MIT-licensed Kazuhiko Arase implementation under `src/vendor/qrcode/` with its
+licence notice. New server integration tests cover tenant isolation for labels,
+HTML escaping, role permissions, price edits, and partner update flags.

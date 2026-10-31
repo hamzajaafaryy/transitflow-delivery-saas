@@ -89,3 +89,32 @@ The partner's own system may need a **different column order or label names**. P
 - Partner Bearer key identifies a single external carrier **within a single company**; only this carrier's assigned shipments can be updated.
 - Trackings may be duplicated across independent tenants; public tracking refuses to return ambiguous results.
 - The finance journal logs manual COD confirmation but does not yet implement double-entry accounting or inter-company settlements.
+
+## Parcels — details, notes, corrections and printing (pilot v0.2)
+
+All routes except the public tracking page require a signed `dn_session` cookie;
+mutation routes also require `X-Requested-With: delivery-ui` and same-origin protection.
+Every parcel lookup is scoped by `tenant_id` and the authenticated role.
+
+- `GET /api/shipments/:id` — parcel, events, COD collection flag, and (for operations/admin) internal notes.
+- `POST /api/shipments/:id/notes` — internal operations/admin note; body `{ "message": "..." }`.
+- `PATCH /api/shipments/:id` — operations/admin correction, with a mandatory `reason` (5+ characters). Allowed fields: `recipient`, `phone`, `city`, `address`, `description`; `cod` is ADMIN only. Changing tracking, tenant, source or partner using this endpoint is rejected. Corrections after external Excel export set `pending_partner_update=1`. **This flag is not cleared automatically by tracking events.**
+- `GET /api/shipments/:id/ticket` — private HTML shipping label with Code128 barcode and QR code linking to public tracking. Fits a 100 x 150 mm label; use the browser Print / Save as PDF action.
+- `GET /suivi/:tracking` — public HTML status timeline (no recipient name, phone, address or COD).
+
+The label does **not** imply opening the package is authorized; the pilot prints "OUVERTURE NON PRÉCISÉE" until an explicit company rule is implemented.
+
+### Partner correction limitations
+
+A local change to a shipment already exported to a partner must be transmitted
+and acknowledged through the partner's real integration or manual workflow.
+The current pilot does not implement that outbound API. Operators see a
+`Modification à transmettre` warning to avoid claiming a correction has already
+been applied by the external company.
+
+### Security and production notice
+
+This is a local pilot. The public tracking endpoint intentionally exposes only
+limited logistics data, but real deployment should add enumeration resistance,
+rate limiting, tenant-specific public tracking links, and a production-grade
+identity and storage setup. Do not upload customer data to the standalone UI demo.

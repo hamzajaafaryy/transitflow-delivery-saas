@@ -97,3 +97,72 @@ test('merchant access is explicitly bound to merchant ID, not user name',async()
   const stats=await request('/api/stats',{as:'M'});assert.equal(stats.value.total,1);
  }finally{await stop();}
 });
+
+test('tenant-scoped parcel information, events, notes and printable ticket are protected',async()=>{
+ const {request,stop}=await start();
+ try{
+  const reg=async(slug,as)=>request('/api/auth/register',{method:'POST',as,data:{companyName:slug,slug,fullName:'Boss',email:`boss@${slug}.ma`,password:'strong-password-for-tests-123'}});
+  for(const [slug,as] of [['alpha2','A'],['beta2','B']]){
+   assert.equal((await reg(slug,as)).status,201);
+   assert.equal((await request('/api/auth/login',{method:'POST',as,data:{company:slug,email:`boss@${slug}.ma`,password:'strong-password-for-tests-123'}})).status,200);
+  }
+  const s=await request('/api/shipments',{method:'POST',as:'A',data:{recipient:'Ali <script>alert(1)</script>',phone:'0600000001',city:'Tanger',address:'Rue 12',cod:525,description:'2 articles'}});
+  assert.equal(s.status,201);
+  const id=s.value.id;
+  const detail=await request(`/api/shipments/${id}`,{as:'A'});
+  assert.equal(detail.status,200);assert.equal(detail.value.events.length,1);assert.equal(detail.value.shipment.cod_centimes,52500);
+  assert.equal((await request(`/api/shipments/${id}`,{as:'B'})).status,404);
+  assert.equal((await request(`/api/shipments/${id}/ticket`,{as:'B'})).status,404);
+  const ticket=await request(`/api/shipments/${id}/ticket`,{as:'A'});
+  assert.equal(ticket.status,200);const html=new TextDecoder().decode(ticket.value);
+  assert.match(html,/<svg class="code128"/);assert.match(html,/<svg class="qrcode"/);
+  assert.match(html,/525,00 DH/);assert.ok(!html.includes('<script>alert(1)</script>'));
+  assert.match(html,/Ali &lt;script&gt;/);assert.match(html,/QR code suivi/);
+  const page=await request(`/suivi/${s.value.tracking}`,{as:'B'});assert.equal(page.status,200);const publicPage=new TextDecoder().decode(page.value);
+  assert.ok(!publicPage.includes('0600000001'));assert.ok(!publicPage.includes('Rue 12'));assert.ok(!publicPage.includes('525'));
+  assert.equal((await request(`/api/shipments/${id}/notes`,{method:'POST',as:'A',data:{message:'Rappeler le client'}})).status,201);
+  const after=await request(`/api/shipments/${id}`,{as:'A'});assert.equal(after.value.notes.length,1);assert.equal(after.value.notes[0].message,'Rappeler le client');
+ }finally{await stop();}
+});
+
+test('parcel editing records reasons, limits price changes to admin and flags external sync',async()=>{
+ const {request,stop}=await start();
+ try{
+  await request('/api/auth/register',{method:'POST',data:{companyName:'Delta',slug:'delta',fullName:'Boss',email:'admin@delta.ma',password:'strong-password-for-tests-123'}});
+  await request('/api/auth/login',{method:'POST',data:{company:'delta',email:'admin@delta.ma',password:'strong-password-for-tests-123'}});
+  const op=await request('/api/users',{method:'POST',data:{name:'Op A',email:'op@delta.ma',password:'another-secure-password-456',role:'OPERATIONS'}});assert.equal(op.status,201);
+  const p=await request('/api/partners',{method:'POST',data:{name:'Tanger Transport',cities:'Tanger'}});
+  const s=await request('/api/shipments',{method:'POST',data:{recipient:'Ali',phone:'0600000001',city:'Tanger',address:'Rue 12',cod:200,partnerId:p.value.id}});
+  assert.equal((await request(`/api/partners/${p.value.id}/export`,{method:'POST',data:{}})).status,200);
+  const patch=await request(`/api/shipments/${s.value.id}`,{method:'PATCH',data:{address:'Rue 14',reason:'Adresse confirmée'}});
+  assert.equal(patch.status,200);assert.equal(patch.value.pendingPartnerUpdate,true);
+  const details=await request(`/api/shipments/${s.value.id}`);
+  assert.equal(details.value.shipment.pending_partner_update,1);assert.equal(details.value.shipment.address,'Rue 14');
+  await request('/api/auth/login',{method:'POST',as:'op',data:{company:'delta',email:'op@delta.ma',password:'another-secure-password-456'}});
+  assert.equal((await request(`/api/shipments/${s.value.id}`,{method:'PATCH',as:'op',data:{cod:'50',reason:'New price confirmed'}})).status,403);
+  assert.equal((await request(`/api/shipments/${s.value.id}`,{method:'PATCH',data:{cod:'300',reason:'x'}})).status,400);
+  assert.equal((await request(`/api/shipments/${s.value.id}`,{method:'PATCH',data:{cod:'300',reason:'Correct price'}})).status,200);
+  const updated=await request(`/api/shipments/${s.value.id}`);assert.equal(updated.value.shipment.cod_centimes,30000);
+  assert.equal((await request(`/api/shipments/${s.value.id}`,{method:'PATCH',data:{tracking:'HIJACK',reason:'Attempted'}})).status,400);
+  assert.equal((await request(`/api/shipments/${s.value.id}`,{method:'PATCH',data:{address:'<script>',reason:'Attempted',tenant_id:'spoof'}})).status,400);
+  const afterStatus=await request('/api/integrations/status',{method:'POST',token:p.value.apiKey,data:{eventId:'scanX',tracking:s.value.tracking,status:'RAMASSE'}});
+  assert.equal(afterStatus.status,200);assert.equal(afterStatus.value.status,'PICKED_UP');
+  const list=await request('/api/shipments');assert.equal(list.value.shipments[0].pending_partner_update,1);
+ }finally{await stop();}
+});
+
+test('driver can print only their assigned labels; merchant cannot access unrelated labels',async()=>{
+ const {request,stop}=await start();
+ try{
+  await request('/api/auth/register',{method:'POST',data:{companyName:'Omega',slug:'omega',fullName:'Owner',email:'owner@omega.ma',password:'strong-password-for-tests-123'}});
+  await request('/api/auth/login',{method:'POST',data:{company:'omega',email:'owner@omega.ma',password:'strong-password-for-tests-123'}});
+  const driver=await request('/api/users',{method:'POST',data:{name:'Driver A',email:'driver@omega.ma',password:'another-secure-password-456',role:'DRIVER'}});
+  const one=await request('/api/shipments',{method:'POST',data:{recipient:'A',phone:'0600000001',city:'Casablanca',address:'Rue A'}});
+  const two=await request('/api/shipments',{method:'POST',data:{recipient:'B',phone:'0600000002',city:'Agadir',address:'Rue B'}});
+  await request('/api/shipments/assign',{method:'POST',data:{shipmentId:one.value.id,driverId:driver.value.id}});
+  await request('/api/auth/login',{method:'POST',as:'D',data:{company:'omega',email:'driver@omega.ma',password:'another-secure-password-456'}});
+  assert.equal((await request(`/api/shipments/${one.value.id}/ticket`,{as:'D'})).status,200);
+  assert.equal((await request(`/api/shipments/${two.value.id}/ticket`,{as:'D'})).status,403);
+  assert.equal((await request(`/api/shipments/${one.value.id}/notes`,{method:'POST',as:'D',data:{message:'nope'}})).status,403);
+ }finally{await stop();}
+});

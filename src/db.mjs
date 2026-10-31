@@ -96,12 +96,22 @@ CREATE TABLE IF NOT EXISTS stock_allocations (
   state TEXT NOT NULL CHECK(state IN ('RESERVED','DISPATCHED','RELEASED')),
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS shipment_notes (
+  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES companies(id),
+  shipment_id TEXT NOT NULL REFERENCES shipments(id), actor_id TEXT NOT NULL REFERENCES users(id),
+  message TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS shipment_notes_lookup ON shipment_notes(tenant_id,shipment_id,created_at);
 CREATE TABLE IF NOT EXISTS imports (
   id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_id TEXT NOT NULL,
   inserted INTEGER NOT NULL, skipped INTEGER NOT NULL, filename TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 `);
+  // Upgrade pilot databases without dropping orders or partner events.
+  if (!db.prepare('PRAGMA table_info(shipments)').all().some(x=>x.name==='pending_partner_update')) {
+    db.exec('ALTER TABLE shipments ADD COLUMN pending_partner_update INTEGER NOT NULL DEFAULT 0');
+  }
   return db;
 }
 export const now = () => new Date().toISOString();

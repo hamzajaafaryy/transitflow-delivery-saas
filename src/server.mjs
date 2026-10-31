@@ -8,6 +8,7 @@ import { openDb, now, id } from './db.mjs';
 import { hashPassword, verifyPassword, signToken, verifyToken, makeKey, hashKey } from './auth.mjs';
 import { STATUSES, STATUS_LABELS, canTransition, canPartnerTransition, mapPartnerStatus, validTracking, centimes } from './domain.mjs';
 import { xlsx, orderColumns, parseCsv, rowsToOrders } from './excel.mjs';
+import { ticketHtml, publicTrackingHtml } from './ticket.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../public');
 const roles={ADMIN:['*'],OPERATIONS:['shipments','partners','imports','export','users.read'],DRIVER:['driver'],MERCHANT:['merchant'],FINANCE:['shipments.read','finance']};
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
@@ -90,6 +91,15 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     const events=all('SELECT status,created_at FROM shipment_events WHERE shipment_id=? ORDER BY created_at ASC',record.id);
     return send(res,200,{tracking:record.tracking,status:record.status,statusLabel:STATUS_LABELS[record.status],city:record.city,updatedAt:record.updated_at,events});
    }
+   if(method==='GET'&&mregex(path,/^\/suivi\/([a-zA-Z0-9_-]{4,64})$/)){
+    const tracking=path.split('/').at(-1);
+    const record=stmt('SELECT id,tracking,status,city,updated_at FROM shipments WHERE tracking=? COLLATE NOCASE',tracking);
+    const count=stmt('SELECT COUNT(*) AS n FROM shipments WHERE tracking=? COLLATE NOCASE',tracking).n;
+    if(count!==1||!record)throw fail(404,'Suivi indisponible');
+    const events=all('SELECT status,created_at FROM shipment_events WHERE shipment_id=? ORDER BY created_at ASC',record.id);
+    const html=publicTrackingHtml({...record,tracking:record.tracking,statusLabel:STATUS_LABELS[record.status],updatedAt:record.updated_at,events:events.map(x=>({...x,label:STATUS_LABELS[x.status]}))});
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html);
+   }
    if(method==='POST'&&path==='/api/integrations/status'){
     const key=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     if(!key||key.length>150)throw fail(401,'Clé API requise');
@@ -161,11 +171,75 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     if(user.role==='MERCHANT'){where.push('s.merchant_id=?');filter.push(user.merchant_id||'NO_MERCHANT');}
     if(status){where.push('s.status=?');filter.push(status);}
     if(search){where.push('(s.tracking LIKE ? OR s.recipient LIKE ?)');filter.push(`%${search}%`,`%${search}%`);}
-    const records=all(`SELECT s.*,p.name AS partner_name,u.full_name AS driver_name FROM shipments s LEFT JOIN partners p ON p.id=s.partner_id AND p.tenant_id=s.tenant_id LEFT JOIN users u ON u.id=s.driver_id AND u.tenant_id=s.tenant_id WHERE ${where.join(' AND ')} ORDER BY s.created_at DESC LIMIT 300`,...filter);
+    const records=all(`SELECT s.*,p.name AS partner_name,u.full_name AS driver_name,m.name AS merchant_name,
+     EXISTS(SELECT 1 FROM ledger l WHERE l.shipment_id=s.id AND l.tenant_id=s.tenant_id AND l.type='COD_COLLECTED') AS cod_collected
+     FROM shipments s LEFT JOIN partners p ON p.id=s.partner_id AND p.tenant_id=s.tenant_id
+     LEFT JOIN users u ON u.id=s.driver_id AND u.tenant_id=s.tenant_id
+     LEFT JOIN merchants m ON m.id=s.merchant_id AND m.tenant_id=s.tenant_id
+     WHERE ${where.join(' AND ')} ORDER BY s.created_at DESC LIMIT 300`,...filter);
     return send(res,200,{shipments:records});
    }
    if(method==='POST'&&path==='/api/shipments'){
     permit(user,'shipments');const data=await json(req);return send(res,201,tx(()=>createShipment(user,data)));
+   }
+   // Details, ticket and notes are tenant-scoped and role-scoped (never public).
+   const detailsMatch=mregex(path,/^\/api\/shipments\/([a-f0-9-]{36})(?:\/(ticket|notes))?$/);
+   if(detailsMatch){
+    const sh=stmt(`SELECT s.*,p.name AS partner_name,m.name AS merchant_name,u.full_name AS driver_name
+      FROM shipments s LEFT JOIN partners p ON p.id=s.partner_id AND p.tenant_id=s.tenant_id
+      LEFT JOIN merchants m ON m.id=s.merchant_id AND m.tenant_id=s.tenant_id
+      LEFT JOIN users u ON u.id=s.driver_id AND u.tenant_id=s.tenant_id
+      WHERE s.id=? AND s.tenant_id=?`,detailsMatch[1],tenant);
+    if(!sh)throw fail(404,'Colis introuvable');
+    if(user.role==='DRIVER'&&(sh.driver_id!==user.id||sh.partner_id))throw fail(403,'Accès interdit');
+    if(user.role==='MERCHANT'&&(!user.merchant_id||sh.merchant_id!==user.merchant_id))throw fail(403,'Accès interdit');
+    if(method==='GET'&&!detailsMatch[2]){
+      const events=all(`SELECT e.status,e.source,e.note,e.created_at,u.full_name AS actor_name
+        FROM shipment_events e LEFT JOIN users u ON u.id=e.actor_id AND u.tenant_id=e.tenant_id
+        WHERE e.shipment_id=? AND e.tenant_id=? ORDER BY e.created_at,e.rowid`,sh.id,tenant);
+      const notes=['ADMIN','OPERATIONS'].includes(user.role)?all(`SELECT n.message,n.created_at,u.full_name AS author
+         FROM shipment_notes n JOIN users u ON u.id=n.actor_id AND u.tenant_id=n.tenant_id
+         WHERE n.shipment_id=? AND n.tenant_id=? ORDER BY n.created_at,n.rowid`,sh.id,tenant):[];
+      const paid=stmt("SELECT COUNT(*) AS n FROM ledger WHERE shipment_id=? AND tenant_id=? AND type='COD_COLLECTED'",sh.id,tenant).n>0;
+      return send(res,200,{shipment:sh,events,notes,codCollectionConfirmed:paid});
+    }
+    if(method==='GET'&&detailsMatch[2]==='ticket'){
+      if(!['ADMIN','OPERATIONS','DRIVER','MERCHANT'].includes(user.role))throw fail(403,'Accès interdit');
+      const company=stmt('SELECT name FROM companies WHERE id=?',tenant);
+      const publicBase=new URL(sameOrigin);
+      const trackingUrl=`${publicBase.origin}/suivi/${encodeURIComponent(sh.tracking)}`;
+      const html=ticketHtml({shipment:sh,company,merchantName:sh.merchant_name,partnerName:sh.partner_name,trackingUrl});
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html);
+    }
+    if(method==='POST'&&detailsMatch[2]==='notes'){
+      permit(user,'shipments');const data=await json(req),message=sanitize(data.message,400);
+      if(message.length<2)throw fail(400,'Commentaire requis');
+      const noteId=id();tx(()=>{run('INSERT INTO shipment_notes VALUES(?,?,?,?,?,?)',noteId,tenant,sh.id,user.id,message,now());audit(tenant,user.id,'SHIPMENT_NOTE','shipment',sh.id,{noteId});});
+      return send(res,201,{id:noteId,ok:true});
+    }
+    if(method==='PATCH'&&!detailsMatch[2]){
+      permit(user,'shipments');
+      if(['DELIVERED','RETURNED','CANCELLED'].includes(sh.status))throw fail(409,'Colis clôturé');
+      const data=await json(req);
+      const allowed=['recipient','phone','city','address','description','cod'];
+      const fields=Object.keys(data).filter(x=>x!=='reason');
+      if(!fields.length||fields.some(x=>!allowed.includes(x)))throw fail(400,'Champs invalides');
+      const reason=sanitize(data.reason,200);
+      if(reason.length<5)throw fail(400,'Motif de modification requis');
+      if(fields.includes('cod')&&user.role!=='ADMIN')throw fail(403,'Modification COD réservée à Admin');
+      if(fields.includes('cod')&&stmt("SELECT 1 FROM ledger WHERE tenant_id=? AND shipment_id=? AND type='COD_COLLECTED'",tenant,sh.id))throw fail(409,'COD déjà collecté');
+      const max={recipient:160,phone:35,city:90,address:400,description:250};
+      const next={};for(const f of fields){const value=f==='cod'?centimes(data.cod):sanitize(data[f],max[f]);if(f!=='description'&&f!=='cod'&&!value)throw fail(400,`Champ requis : ${f}`);next[f==='cod'?'cod_centimes':f]=value;}
+      const changed=Object.fromEntries(Object.entries(next).filter(([k,v])=>v!==sh[k]));
+      if(!Object.keys(changed).length)return send(res,200,{ok:true,unchanged:true});
+      const externalPending=Boolean(sh.partner_id&&['EXPORTED','PICKED_UP','IN_TRANSIT','OUT_FOR_DELIVERY','POSTPONED','REFUSED'].includes(sh.status));
+      tx(()=>{
+        const keys=Object.keys(changed),values=Object.values(changed);
+        run(`UPDATE shipments SET ${keys.map(k=>`${k}=?`).join(',')},pending_partner_update=CASE WHEN ? THEN 1 ELSE pending_partner_update END,updated_at=? WHERE id=? AND tenant_id=?`,...values,externalPending?1:0,now(),sh.id,tenant);
+        audit(tenant,user.id,'SHIPMENT_EDIT','shipment',sh.id,{fields:keys,reason,before:Object.fromEntries(keys.map(k=>[k,sh[k]])),after:changed,externalPending});
+      });
+      return send(res,200,{ok:true,pendingPartnerUpdate:externalPending||Boolean(sh.pending_partner_update)});
+    }
    }
    const statusMatch=mregex(path,/^\/api\/shipments\/([a-f0-9-]{36})\/status$/);
    if(method==='POST'&&statusMatch){
