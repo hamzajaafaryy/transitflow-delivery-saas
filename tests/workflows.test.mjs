@@ -176,3 +176,14 @@ test('one active mission per vehicle and read-only support pickup access',async(
   assert.equal((await post(t,'/pickups/'+ids[0]+'/start',{},'pickup')).status,200);assert.equal((await post(t,'/pickups/'+ids[1]+'/start',{},'pickup')).status,409);
  }finally{await t.stop();}
 });
+
+test('partner events cannot override an open return or move the original delivery date and duplicate COD',async()=>{
+ const t=await start();try{
+  await t.merchant();const s=await t.order({},'merchant');await t.pickup(s.value.tracking);await sendToAgency(t,s.value);
+  const webhook=(eventId,status)=>t.request('/api/integrations/status',{method:'POST',token:t.agencies.Tanger.apiKey,data:{eventId,tracking:s.value.tracking,status}});
+  const ret=await post(t,'/returns',{shipmentId:s.value.id,reason:'Retour demandé avant livraison'},'merchant');assert.equal(ret.status,201);
+  assert.equal((await webhook('blocked','LIVRE')).status,409);await post(t,'/returns/'+ret.value.id+'/cancel',{reason:'Destinataire confirme le maintien de la commande'},'merchant');
+  assert.equal((await webhook('first-delivery','LIVRE')).status,200);const date='2026-10-01T12:00:00.000Z';t.db.prepare('UPDATE shipments SET delivered_at=? WHERE id=?').run(date,s.value.id);
+  assert.equal((await webhook('new-id-same-delivery','LIVRE')).status,200);assert.equal(t.db.prepare('SELECT delivered_at FROM shipments WHERE id=?').get(s.value.id).delivered_at,date);assert.equal(t.db.prepare('SELECT COUNT(*) n FROM cod_receipts WHERE shipment_id=?').get(s.value.id).n,1);
+ }finally{await t.stop();}
+});

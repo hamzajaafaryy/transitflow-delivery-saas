@@ -140,17 +140,19 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     if(['CREATED','EXPORTED','ASSIGNED_AGENCY','CANCELLED'].includes(mapped))throw fail(422,'Statut non autorisé pour API partenaire');
     const result=tx(()=>{
       const current=stmt('SELECT * FROM shipments WHERE id=? AND company_id=?',sh.id,agency.company_id);
+      if(mapped!=='RETURNING'&&stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND active=1",agency.company_id,sh.id))throw fail(409,'Retour ouvert : mise à jour de livraison bloquée');
       if(!canAgencyTransition(current.status,mapped))throw fail(409,`Transition invalide ${current.status} → ${mapped}`);
       const t=now();
-      run('UPDATE shipments SET status=?, external_status=?,external_tracking=COALESCE(NULLIF(?,\'\'),external_tracking),external_updated_at=?,updated_at=?,delivered_at=CASE WHEN ?=\'DELIVERED\' THEN ? ELSE delivered_at END,handed_over_at=CASE WHEN ?=\'PICKED_UP\' THEN COALESCE(handed_over_at,?) ELSE handed_over_at END WHERE id=? AND company_id=?',mapped,externalStatus,externalTracking,t,t,mapped,t,mapped,t,current.id,agency.company_id);
+      run('UPDATE shipments SET status=?, external_status=?,external_tracking=COALESCE(NULLIF(?,\'\'),external_tracking),external_updated_at=?,updated_at=?,delivered_at=CASE WHEN ?=\'DELIVERED\' THEN COALESCE(delivered_at,?) ELSE delivered_at END,handed_over_at=CASE WHEN ?=\'PICKED_UP\' THEN COALESCE(handed_over_at,?) ELSE handed_over_at END WHERE id=? AND company_id=?',mapped,externalStatus,externalTracking,t,t,mapped,t,mapped,t,current.id,agency.company_id);
       run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,external_event_id,note,created_at) VALUES (?,?,?,?,?,?,?,?)',id(),agency.company_id,current.id,mapped,`AGENCY:${agency.id}`,eventId,`External: ${externalStatus}`,t);
       if(mapped==='DELIVERED')recordCodReceipt({stmt,run,companyId:agency.company_id},current,{holderAgencyId:agency.id});
+      if(['DELIVERED','REFUSED','UNREACHABLE','POSTPONED','RETURNING'].includes(mapped))run("UPDATE delivery_route_items SET state='ATTEMPTED',active=0 WHERE company_id=? AND shipment_id=? AND active=1",agency.company_id,current.id);
       audit(agency.company_id,null,'AGENCY_SYNC','shipment',current.id,{agencyId:agency.id,eventId,from:current.status,to:mapped});
       return {ok:true,tracking:current.tracking,status:mapped};
     });return send(res,200,result);
    }
    if(method==='GET'&&!path.startsWith('/api/')){
-    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/workflow-forms.js':'workflow-forms.js','/styles.css':'styles.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
+    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/styles.css':'styles.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
     const filename=assets[path];if(!filename)throw fail(404,'Page introuvable');
     const data=readFileSync(resolve(root,filename));res.writeHead(200,{'Content-Type':mime[extname(filename)]||'application/manifest+json','Cache-Control':'no-store'});return res.end(data);
    }
@@ -206,7 +208,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     const limit=Math.min(300,Math.max(1,Number(url.searchParams.get('limit'))||100)),offset=Math.max(0,Number(url.searchParams.get('offset'))||0);
     const total=stmt(`SELECT COUNT(*) AS n FROM shipments s WHERE ${where.join(' AND ')}`,...filter).n;
     const records=all(`SELECT s.*,p.name AS agency_name,u.full_name AS driver_name,m.name AS merchant_name,
-     EXISTS(SELECT 1 FROM ledger l WHERE l.shipment_id=s.id AND l.company_id=s.company_id AND l.type='COD_COLLECTED') AS cod_collected
+     EXISTS(SELECT 1 FROM ledger l WHERE l.shipment_id=s.id AND l.company_id=s.company_id AND l.type='COD_COLLECTED') AS cod_collected,(SELECT c.state FROM cod_receipts c WHERE c.shipment_id=s.id AND c.company_id=s.company_id) AS cod_receipt_state
      FROM shipments s LEFT JOIN agencies p ON p.id=s.agency_id AND p.company_id=s.company_id
      LEFT JOIN users u ON u.id=s.driver_id AND u.company_id=s.company_id
      LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id

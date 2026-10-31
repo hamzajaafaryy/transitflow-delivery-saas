@@ -31,7 +31,7 @@ async function session(email,tab='dashboard',mobile=false){
 }
 async function go(page,tab){currentPage=page;await page.goto(base+'/?tab='+tab);await page.locator('.shell').waitFor();}
 async function click(page,selector){await page.locator(selector).click();}
-async function save(page,name){currentPage=page;await page.screenshot({path:`${evidence}/${name}.png`,fullPage:true});}
+async function save(page,name){currentPage=page;await page.waitForLoadState('networkidle');await page.screenshot({path:`${evidence}/${name}.png`,fullPage:true});}
 async function submit(page){
  const dialog=page.getByRole('dialog');await dialog.locator('button[type="submit"]').click();await dialog.waitFor({state:'detached'});
 }
@@ -59,6 +59,7 @@ async function run(){
  const vehicle=await request(admin,'/workflow/vehicles',{plate:'11111-A-6',kind:'CAR',ownership:'DRIVER',driverId:people.PICKUP_DRIVER.id});
  const product=await request(admin,'/inventory/products',{sku:'BROWSER-SKU',name:'Produit marchand',merchantId:merchant.id});
  await request(admin,'/inventory/receive',{productId:product.id,quantity:10,location:'A-01'});
+ const product2=await request(admin,'/inventory/products',{sku:'BROWSER-SECOND',name:'Second article',merchantId:merchant.id});await request(admin,'/inventory/receive',{productId:product2.id,quantity:5,location:'B-01'});
  console.log('Bootstrap UI and 11 account roles ready');
 
  // A merchant creates both sources through the real form.
@@ -67,10 +68,10 @@ async function run(){
  for(const source of ['EXTERNAL','STOCK']){
   await m.page.locator('[data-action="new-shipment"]').first().click();await choose(m.page,{source,city:'Tanger'});
   await fill(m.page,{recipient:source+' Client',phone:'0612345678',address:'Rue Test 12',cod:200,description:'Commande '+source});
-  if(source==='STOCK'){await choose(m.page,{productId:product.id});await fill(m.page,{quantity:2});}
+  if(source==='STOCK'){await choose(m.page,{productId:product.id});await fill(m.page,{quantity:2});await click(m.page,'[data-add-stock-line]');const second=m.page.getByRole('dialog').locator('[data-stock-line]').nth(1);await second.locator('[name="productId"]').selectOption(product2.id);await second.locator('[name="quantity"]').fill('1');}
   await submit(m.page);await eventually(()=>db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source)?.tracking,v=>Boolean(v),'created '+source);tracks.push(db.prepare('SELECT tracking FROM shipments WHERE description=?').get('Commande '+source).tracking);
  }
- const [external,stock]=tracks;assert.equal(db.prepare("SELECT SUM(quantity) n FROM stock_allocations WHERE state='RESERVED'").get().n,2);
+ const [external,stock]=tracks;assert.equal(db.prepare("SELECT SUM(quantity) n FROM stock_allocations WHERE state='RESERVED'").get().n,3);
  await go(m.page,'pickups');await click(m.page,'[data-action="wf-point"]');await fill(m.page,{label:'Boutique Casa',contactName:'Marchand',phone:'0612345678',city:'Casablanca',address:'Rue Marchand 5'});await submit(m.page);
  await click(m.page,'[data-action="wf-new"][data-kind="pickups"]');await m.page.getByRole('dialog').locator('input[name="shipmentIds"]').check();await submit(m.page);
  const pickup=db.prepare('SELECT * FROM pickups').get();await eventually(()=>m.page.locator('[data-action="wf-back"]').count(),1,'pickup detail');await save(m.page,'01-merchant-pickup');
@@ -100,13 +101,13 @@ async function run(){
  await go(a.page,'routes');await click(a.page,'[data-action="wf-new"][data-kind="routes"]');await choose(a.page,{agencyId:tanger.id});await choose(a.page,{driverId:people.DRIVER.id});await eventually(()=>a.page.getByRole('dialog').locator('input[name="shipmentIds"]').count(),2,'route eligible parcels');for(const check of await a.page.getByRole('dialog').locator('input[name="shipmentIds"]').all())await check.check();await submit(a.page);
  const route=db.prepare('SELECT * FROM delivery_routes').get();const d=await session(people.DRIVER.email,'routes',true);await open(d.page,'routes',route.id);await click(d.page,'[data-kind="routes/start"]');await eventually(()=>state('delivery_routes',route.id),'ACTIVE','start route');await d.page.locator(`[data-action="wf-attempt"][data-id="${shipment(external).id}"]`).waitFor();
  await click(d.page,`[data-action="wf-attempt"][data-id="${shipment(external).id}"]`);await fill(d.page,{receiverName:'Client Livraison',collectedAmount:200});await submit(d.page);
- await click(d.page,`[data-action="wf-attempt"][data-id="${shipment(stock).id}"]`);await choose(d.page,{result:'REFUSED'});await fill(d.page,{note:'Client refuse le produit reçu'});await submit(d.page);await click(d.page,'[data-kind="routes/close"]');await eventually(()=>state('delivery_routes',route.id),'CLOSED','close route');await save(d.page,'05-driver-mobile');
+ await click(d.page,`[data-action="wf-attempt"][data-id="${shipment(stock).id}"]`);await choose(d.page,{result:'REFUSED'});await fill(d.page,{note:'Client refuse le produit reçu'});await submit(d.page);await click(d.page,'[data-kind="routes/close"]');await eventually(()=>state('delivery_routes',route.id),'CLOSED','close route');await d.page.locator('[data-kind="routes/close"]').waitFor({state:'detached'});await save(d.page,'05-driver-mobile');
 
  // Stock returns pass physical receipt and QC before increasing sellable stock.
  await go(m.page,'returns');await click(m.page,'[data-action="wf-new"][data-kind="returns"]');await fill(m.page,{tracking:stock,reason:'Refus du client, récupérer les produits'});await submit(m.page);const ret=db.prepare('SELECT * FROM parcel_returns').get();
  await go(a.page,'returns');await open(a.page,'returns',ret.id);await click(a.page,'[data-action="wf-authorize"]');await fill(a.page,{note:'Retour warehouse autorisé'});await submit(a.page);await click(a.page,'[data-action="wf-ship-return"]');await fill(a.page,{proofReference:'BON-RETOUR-001'});await submit(a.page);await click(a.page,'[data-action="wf-receive-return"]');await fill(a.page,{scan:stock});await submit(a.page);
  assert.equal(db.prepare('SELECT SUM(quantity_on_hand) n FROM stock_lots WHERE product_id=?').get(product.id).n,8);
- await click(a.page,'[data-action="wf-inspect-return"]');await choose(a.page,{disposition:'RESTOCK'});await fill(a.page,{note:'Deux produits scellés conformes'});await submit(a.page);await click(a.page,'[data-action="wf-complete-return"]');await submit(a.page);assert.equal(state('parcel_returns',ret.id),'COMPLETED');assert.equal(db.prepare('SELECT SUM(quantity_on_hand) n FROM stock_lots WHERE product_id=?').get(product.id).n,10);await save(a.page,'06-return-qc');
+ await click(a.page,'[data-action="wf-inspect-return"]');await choose(a.page,{disposition:'RESTOCK'});await fill(a.page,{note:'Trois unités scellées conformes, deux références'});await submit(a.page);await click(a.page,'[data-action="wf-complete-return"]');await submit(a.page);assert.equal(state('parcel_returns',ret.id),'COMPLETED');assert.equal(db.prepare('SELECT SUM(quantity_on_hand) n FROM stock_lots WHERE product_id=?').get(product.id).n,10);await save(a.page,'06-return-qc');
 
  // A declaration never credits the merchant until finance reconciles the remittance.
  await go(d.page,'cash');await click(d.page,'[data-action="wf-remittance"]');await fill(d.page,{proofReference:'CAISSE-LIVREUR-001'});await submit(d.page);const remit=db.prepare('SELECT * FROM cash_remittances').get();assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,0);
@@ -114,7 +115,9 @@ async function run(){
 
  const support=await session(people.SUPPORT.email,'claims');await open(support.page,'claims',claim.id);await support.page.locator('#claim-message').fill('Observation interne confidentielle');await support.page.locator('[name="internal"]').check();await support.page.locator('#claim-reply button').click();await eventually(()=>db.prepare('SELECT COUNT(*) n FROM claim_messages WHERE internal=1').get().n,1,'internal note');await support.page.locator('#claim-reply button:not([disabled])').waitFor();await support.page.locator('#claim-message').fill('Votre colis a été livré, merci de votre confiance');await support.page.locator('#claim-reply button').click();await eventually(()=>db.prepare('SELECT COUNT(*) n FROM claim_messages WHERE internal=0').get().n,2,'public support reply');await support.page.locator('#claim-reply button:not([disabled])').waitFor();await click(support.page,'[data-action="wf-claim-status"]');await choose(support.page,{state:'RESOLVED'});await fill(support.page,{note:'Livraison et suivi confirmés'});await submit(support.page);await save(support.page,'08-support');
  await go(m.page,'claims');await open(m.page,'claims',claim.id);await m.page.getByText('Votre colis a été livré, merci de votre confiance',{exact:true}).waitFor();assert.equal(await m.page.getByText('Observation interne confidentielle',{exact:true}).count(),0);
- await m.page.goto(base+'/merchant.html');await m.page.locator('#merchant-app .portal').waitFor();await save(m.page,'09-merchant-portal');
+ await m.page.goto(base+'/merchant.html');await m.page.locator('#merchant-app .portal').waitFor();await m.page.locator('[data-period="today"]').click();await eventually(()=>m.page.locator('.metric-val').first().innerText(),v=>v==='1','merchant delivery count');await save(m.page,'09-merchant-portal');
+ await m.page.locator('.sidebar [data-section="new"]').click();const order=m.page.locator('#order-form');await order.locator('[name="source"]').selectOption('STOCK');await order.locator('[name="recipient"]').fill('Portal Multi SKU');await order.locator('[name="phone"]').fill('0612345678');await order.locator('[name="city"]').selectOption('Tanger');await order.locator('[name="address"]').fill('Adresse Portail');await order.locator('[name="cod"]').fill('100');await order.locator('[name="productId"]').selectOption(product.id);await order.locator('[data-add-stock-line]').click();await order.locator('[data-stock-line]').nth(1).locator('[name="productId"]').selectOption(product2.id);await save(m.page,'10-multi-product-order');await order.locator('[type="submit"]').click();await eventually(()=>db.prepare('SELECT id FROM shipments WHERE recipient=?').get('Portal Multi SKU')?.id,v=>Boolean(v),'portal multi product');
+ const portal=db.prepare('SELECT id FROM shipments WHERE recipient=?').get('Portal Multi SKU');assert.equal(db.prepare("SELECT COUNT(DISTINCT product_id) n FROM stock_allocations WHERE shipment_id=? AND state='RESERVED'").get(portal.id).n,2);await request(admin,'/shipments/'+portal.id+'/status',{status:'CANCELLED',note:'Fin du contrôle navigateur'});
 
  // Every role loads every visible workspace without a forbidden API or JS error.
  for(const [role,person] of Object.entries(people)){

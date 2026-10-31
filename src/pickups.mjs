@@ -1,5 +1,5 @@
 import {id,now} from './db.mjs';
-import {requirePermission,has} from './access.mjs';
+import {requirePermission,has,agencyScoped} from './access.mjs';
 import {clean,fail,reference,isoDate,merchantId,pickupAccess,scanShipment,parcelEvent,notify,documentHtml,html,esc} from './workflow-shared.mjs';
 export async function pickupRoute(ctx){
  const {path,method,url,user,companyId,stmt,all,run,tx,json,send,res,audit}=ctx;
@@ -14,7 +14,7 @@ export async function pickupRoute(ctx){
  }
  if(path==='/api/workflow/vehicles'){
   requirePermission(user,'pickups.manage','routes.manage','vehicles.self');
-  if(method==='GET')return send(res,200,{vehicles:all('SELECT v.*,u.full_name AS driver_name FROM vehicles v LEFT JOIN users u ON u.id=v.driver_id AND u.company_id=v.company_id WHERE v.company_id=?'+(user.role==='PICKUP_DRIVER'?' AND v.driver_id=?':'')+' ORDER BY v.plate',...user.role==='PICKUP_DRIVER'?[companyId,user.id]:[companyId])});
+  if(method==='GET'){const scope=user.role==='PICKUP_DRIVER'?' AND v.driver_id=?':agencyScoped(user)?' AND (v.driver_id IS NULL OR u.agency_id=?)':'';const args=user.role==='PICKUP_DRIVER'?[companyId,user.id]:agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId];return send(res,200,{vehicles:all('SELECT v.*,u.full_name AS driver_name FROM vehicles v LEFT JOIN users u ON u.id=v.driver_id AND u.company_id=v.company_id WHERE v.company_id=?'+scope+' ORDER BY v.plate',...args)});}
   if(method==='POST'){
    requirePermission(user,'pickups.manage');const data=await json(ctx.req),plate=clean(data.plate,35).toUpperCase(),kind=data.kind||'CAR',ownership=data.ownership||'DRIVER',driver=data.driverId||null;
    if(!plate||!['CAR','VAN','MOTORCYCLE','TRUCK'].includes(kind)||!['DRIVER','COMPANY'].includes(ownership))throw fail(400,'Véhicule invalide');

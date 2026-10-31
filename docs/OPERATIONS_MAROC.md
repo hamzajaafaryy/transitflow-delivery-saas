@@ -45,7 +45,7 @@ La preuve nominative/référence n’est pas une signature électronique, un OTP
 | --- | --- |
 | EXTERNAL | Aucun prélèvement SKU ; collecte ou dépôt direct |
 | STOCK | Propriété marchand et FIFO ; toutes les lignes réservées ou rollback |
-| Plusieurs produits | API jusqu’à 20 références distinctes ; allocations par SKU |
+| Plusieurs produits | Interface et API jusqu’à 20 références distinctes ; allocations par SKU |
 | Rupture | HTTP 409, aucune commande/réservation partielle |
 | Annulation avant sortie | Réservations libérées sans fausse entrée physique |
 | Autre ramasseur/client | Accès/scan refusé |
