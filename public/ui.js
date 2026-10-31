@@ -1,4 +1,5 @@
 const paths={
+ phone:'M6 3H3v4c0 8 6 14 14 14h4v-3l-5-3-2 3c-4-2-6-4-8-8l3-2-3-5Z',
  dashboard:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
  shipments:'m3 7 9-4 9 4-9 4-9-4 M3 7v10l9 4 9-4V7 M12 11v10 M7 5l10 4',
  pickups:'M3 7h11v10H3z M14 10h4l3 4v3h-7 M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
