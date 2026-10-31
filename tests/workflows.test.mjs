@@ -18,7 +18,7 @@ test('merchant pickup request, assigned personal vehicle, partial collection and
   assert.equal((await post(t,'/pickups',{pointId:point.value.id,scheduledAt:new Date().toISOString(),shipmentIds:[a.value.id]},'merchant')).status,409);
   assert.equal((await t.pickup(a.value.tracking)).status,409,'warehouse cannot accept a parcel not yet collected from the requested point');
   const url='/pickups/'+request.value.id;assert.equal((await post(t,url+'/assign',{driverId:driver,vehicleId:v.value.id})).status,200);
-  assert.equal((await get(t,url,'other')).status,403);assert.equal((await post(t,url+'/start',{},'pickup')).status,200);
+  assert.equal((await t.request('/api/stats',{as:'pickup'})).status,200);assert.equal((await t.request('/api/stats',{as:'other'})).value.total,0);assert.equal((await get(t,url,'other')).status,403);assert.equal((await post(t,url+'/start',{},'pickup')).status,200);
   assert.equal((await post(t,url+'/scan',{scan:a.value.tracking},'pickup')).status,200);assert.equal((await post(t,url+'/scan',{scan:a.value.tracking},'pickup')).status,409);
   assert.equal(t.db.prepare('SELECT status FROM shipments WHERE id=?').get(a.value.id).status,'COLLECTED');
   assert.equal((await post(t,url+'/complete',{receiverName:'Hamza'},'pickup')).status,400);

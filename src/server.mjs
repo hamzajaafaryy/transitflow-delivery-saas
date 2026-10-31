@@ -193,9 +193,9 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     return send(res,200,{user,company,permissions:roles[user.role],roleLabels:ROLE_LABELS,statusLabels:STATUS_LABELS});
    }
    if(method==='GET'&&path==='/api/stats'){
-    const scoped=shipmentScope(user,'');const clause=scoped.clause,args=[companyId,...scoped.args];
-    const rows=all('SELECT status,COUNT(*) AS n FROM shipments WHERE company_id=?'+clause+' GROUP BY status',...args),total=rows.reduce((s,x)=>s+x.n,0);
-    const cod=stmt("SELECT COALESCE(SUM(cod_centimes),0) AS value FROM shipments WHERE company_id=?"+clause+" AND status='DELIVERED'",...args).value;
+    const scoped=shipmentScope(user,'s');const clause=scoped.clause,args=[companyId,...scoped.args];
+    const rows=all('SELECT s.status,COUNT(*) AS n FROM shipments s WHERE s.company_id=?'+clause+' GROUP BY status',...args),total=rows.reduce((s,x)=>s+x.n,0);
+    const cod=stmt("SELECT COALESCE(SUM(s.cod_centimes),0) AS value FROM shipments s WHERE s.company_id=?"+clause+" AND status='DELIVERED'",...args).value;
     return send(res,200,{total,byStatus:Object.fromEntries(rows.map(x=>[x.status,x.n])),deliveredCodCentimes:cod,agencies:['MERCHANT','DRIVER'].includes(user.role)?0:stmt('SELECT COUNT(*) AS n FROM agencies WHERE company_id=?',companyId).n});
    }
    if(method==='GET'&&path==='/api/shipments'){
