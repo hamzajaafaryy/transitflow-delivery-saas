@@ -1,42 +1,37 @@
-# Plan de livraison — de MVP local à SaaS vendable
+# Périmètre livré et travaux restants — v0.8
 
-## État actuel — implémenté et testé
+## Disponible
 
-- French responsive web UI; same URL for drivers and admins
-- Company registration, scoped accounts, user roles
-- Orders, partner assignment manual, multi-carrier same city
-- Generic external partner API for status changes + replay prevention
-- CSV/XLSX import and XLSX export + manifest
-- Public tracking and merchant-filtered view
-- Basic inventory fulfillment FIFO
-- Initial COD collection journal and SaaS usage counters
+Société unique ; onze rôles ; agences par ville ; commandes externes/stock FIFO ; tickets et bons ; collecte avec ramasseur/véhicule personnel ; réception warehouse ; containers/Excel/départ ; arrivée agence ; tournées/tentatives ; motifs/report/dérogation ; perte/dommage/colis retrouvé ; retours/inspection/restock/remise marchand/nouvel envoi/échange ; réclamations/pièces privées ; notifications ; COD déclaré/remis/rapproché ; frais agence retenus ; tarifs/relevés/ajustements/dettes ; sessions révocables et audit ; catalogue marchand ; collecte de réapprovisionnement SKU ; réceptions multi-cartons/partielles avec écarts ; scan des produits par SKU/code-barres ; quarantaine d’approvisionnement et preuves de traitement ; comptages de lots avec validation responsable ; journal immuable des mouvements et soldes de migration.
 
-## P0 — avant toutes données réelles / mise en production
+Le [cadrage métier](OPERATIONS_MAROC.md) décrit les cas et sources. Les tests API et parcours Chromium de la CI sont reproductibles.
 
-1. **PostgreSQL + migrations**: replace experimental SQLite, introduce row-level tenant security, foreign key tenant constraints (composite tenant-aware FKs), and load tests.
-2. **Professional auth**: MFA for admins, reset password, invite/accept workflow, session revoke, device management, proper rate limiting on every API, access control audits.
-3. **Logistics workflow**: signed physical handover manifest, parcel-level barcode scanning in our warehouse, scan discrepancy reconciliation, complete return/re-attempt workflows, conflict resolution and independent customer claims.
-4. **Real partner connectors**: official API contracts for each partner (e.g. Oscario), inbound push vs outbound polling, token rotation, secure outbound secrets store, asynchronous retry / dead-letter queue, delivery status normalization and backfill, dedicated integration tests.
-5. **Excel partner templates**: editable per-carrier Excel column mapping, required fields, validated import preview, error download and versioned templates.
-6. **COD-grade finance**: double-entry immutable ledger, driver/branch/courier custody, bank payouts, intercompany netting, partner commission contracts, reverse entries, accounting audit and reconciliation.
-7. **Security & operations**: independent penetration test, backups and restore drills, alerting, access logs, secrets vault, security headers, safe file handling, privacy retention & deletion workflow.
+## Intégrations et preuves
 
-## P1 — complete Morocco SaaS operations
+- Adaptateur réel par partenaire : authentification, modèle Excel, API sortante, retries et conflits. Le webhook générique n’établit pas de connexion commerciale.
+- Paiement bancaire/carte réel et import de relevés : les références actuelles sont déclaratives et rapprochées manuellement.
+- Signature, photo, GPS ou OTP de remise : preuve actuelle nominative/référence et historique seulement.
+- SMS/WhatsApp/email/push : notifications actuelles dans l’application.
 
-- Warehouse locations, bin tracking, product per merchant, returns to stock, picking lists, lot/batch controls and fulfillment billing.
-- Route planning, pickup lists, inter-agency transfers, parcel barcodes/labels, proof of delivery, vehicle assignments.
-- Merchant API + Shopify/WooCommerce integration with webhooks/idempotency.
-- Arabic/English internationalization possible later; French first.
-- Notifications via licensed SMS/WhatsApp API service; no unapproved WhatsApp automation.
-- Support ticketing and merchant financial statements.
-- Platform owner (separate) console for tenant lifecycle, subscriptions and administrative consent controls.
+## Cas physiques avancés
 
-## P2 — hybrid SaaS billing
+- Picking groupé par vague, emplacement/lot scanné, dates d’expiration, planification des inventaires tournants et suivi des écarts récurrents ; actuellement contrôle produit/quantité et comptage explicite par marchand/emplacement.
+- Unification de la quarantaine d’approvisionnement avec les produits endommagés en retour ; actuellement deux dossiers séparés, sans double remise en stock.
+- Plusieurs cartons/commande, livraison partielle, échange simultané au pas de porte ; actuellement colis livré entier et remplacement après contrôle du retour.
+- Transferts multi-hubs, transporteurs intermédiaires et circuit de collecte multi-boutiques optimisé ; actuellement une mission par point.
+- Optimisation/GPS, mode hors ligne, caméra ; actuellement ordre d’arrêts et douchette clavier.
+- Compte polyvalent ramasseur/livreur et remplacement de conducteur après départ.
 
-- Paid plans: monthly base fee + per-order charges after included quota, configured prices (not hardcoded assumptions), recurring invoices and taxes per jurisdiction, usage adjustments, refunds and cancellation policies.
-- Billing provider integration, subscription webhook verification, graceful suspension, customer support, billing history, invoice export.
-- External partner rate cards and shared transportation network financial netting.
+## Finance et contrats
 
-## Explicit limits of this version
+- Frais automatiques de ramassage, stockage, échec, retour, poids/volume, zones et commissions conducteur ; actuellement livraison et ajustements motivés.
+- Partie double, fiscalité et règles de clôture à valider avec un professionnel.
+- Paiement entrant d’une dette marchand, avances et garanties ; actuellement report sur les relevés suivants.
+- Remboursement effectif destinataire et preuve de décaissement : l’ajustement ne réalise pas de remboursement bancaire.
+- Contrepassation d’une remise rapprochée/relevé validé : les documents restent figés, corrections par ajustements et contrôle comptable.
 
-The system is a **functional foundation** to test and iterate, not a completely built SaaS product. The production authorization/finance threat model is still incomplete; there is no production Vercel deployment, no live connection with Oscario, no complete route/agency workflows or reliable production-grade intercompany settlements. All choices and tests should be reviewed before exposing the site to the Internet.
+## Production
+
+Sauvegardes et restauration, migrations sur copie anonymisée, supervision/alertes, charge/concurrence, MFA, invitation/récupération, rotation secrets, conservation des pièces et revue des accès ; validation des contrats/données personnelles/documents ; accessibilité complète et tests sur imprimantes/douchettes réelles.
+
+Ces éléments restent hors du périmètre livré. L’interface ne les simule pas comme des services connectés.

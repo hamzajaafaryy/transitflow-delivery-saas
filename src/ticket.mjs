@@ -25,16 +25,16 @@ export function qrSvg(text){
 }
 
 const fmtMoney=(cents)=>new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(cents||0)/100)+' DH';
-export function ticketHtml({shipment,company,merchantName='',partnerName='',trackingUrl}){
+export function ticketHtml({shipment,company,merchantName='',agencyName='',trackingUrl}){
  const sh=shipment, e=escapeHtml;
- const label=partnerName||'Livraison interne';
+ const label=agencyName||'Livraison interne';
  const qr=qrSvg(trackingUrl);
  const barcode=code128Svg(sh.tracking);
  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ticket ${e(sh.tracking)}</title>
 <style>@page{size:100mm 150mm;margin:0}*{box-sizing:border-box}body{margin:0;background:#e8eaed;color:#151515;font-family:Arial,Helvetica,sans-serif}main{background:white;width:100mm;min-height:150mm;margin:18px auto;padding:5mm 5mm 4mm;border:1px solid #ccc}header{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:3mm;gap:8mm}header strong{font-size:19px;letter-spacing:-.5px}header small{font-size:10px;display:block;margin-top:5px}h1{font-size:14px;margin:0}table{border-collapse:collapse;width:100%;margin-top:4mm}th,td{border:1px solid #222;padding:5px;text-align:left;font-size:11px;word-break:break-word}th{width:29%;font-weight:700}.route{margin-top:4mm;display:flex;align-items:center;gap:4mm}.partner{border:2px solid #111;padding:9px;font-weight:800;font-size:13px;min-width:36mm;text-align:center}.qrcode{width:29mm;height:29mm}.code128{width:100%;height:21mm;display:block}.tracking{text-align:center;font-weight:800;font-size:16px;letter-spacing:1px;margin:4mm 0 1mm}.cod{border:2px solid #111;padding:7px;font-weight:900;text-align:center;font-size:18px}.footer{margin-top:3mm;border:1px solid #111;text-align:center;font-weight:700;padding:7px;font-size:11px}.meta{margin-top:3mm;font-size:10px;color:#555}.print-note{max-width:100mm;margin:10px auto;padding:10px;background:white;border-radius:6px;font-size:12px}@media print{body{background:white}main{margin:0;border:0;box-shadow:none}.print-note{display:none}}</style></head><body>
 <div class="print-note">Ticket prêt à imprimer — utilisez « Imprimer » dans votre navigateur ou « Enregistrer au format PDF ». Format 100 × 150 mm.</div><main><header><div><strong>${e(company.name)}</strong><small>${e(merchantName||'Expéditeur non précisé')}</small></div><h1>COLIS / LIVRAISON</h1></header>
 <table><tbody><tr><th>Destinataire</th><td>${e(sh.recipient)}</td></tr><tr><th>Téléphone</th><td>${e(sh.phone)}</td></tr><tr><th>Ville</th><td>${e(sh.city)}</td></tr><tr><th>Adresse</th><td>${e(sh.address)}</td></tr><tr><th>Marchandise</th><td>${e(sh.description||'Non précisée')}</td></tr></tbody></table>
-<div class="route"><div class="partner">${e(label)}</div>${qr}</div><div class="tracking">${e(sh.tracking)}</div>${barcode}<div class="cod">CRBT : ${fmtMoney(sh.cod_centimes)}</div><div class="footer">COLIS NORMAL · OUVERTURE NON PRÉCISÉE</div><div class="meta">Créé le ${e(sh.created_at?.slice(0,16).replace('T',' '))} · Ref. ${e(sh.tracking)}</div></main></body></html>`;
+<div class="route"><div class="partner">${e(label)}</div>${qr}</div><div class="tracking">${e(sh.tracking)}</div>${barcode}<div class="cod">CRBT : ${fmtMoney(sh.cod_centimes)}</div><div class="footer">${sh.fragile?'COLIS FRAGILE':'COLIS NORMAL'} · ${sh.allow_open?'OUVERTURE AUTORISÉE':'OUVERTURE NON AUTORISÉE'}</div><div class="meta">Créé le ${e(sh.created_at?.slice(0,16).replace('T',' '))} · Ref. ${e(sh.tracking)}</div></main></body></html>`;
 }
 export function publicTrackingHtml({tracking,status,statusLabel,city,updatedAt,events=[]}){
  const e=escapeHtml;

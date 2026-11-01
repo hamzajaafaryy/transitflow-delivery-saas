@@ -1,120 +1,133 @@
-# TransitFlow — Delivery Network SaaS (MVP)
+# TransitFlow — exploitation d’une société de livraison au Maroc
 
-**Statut : prototype fonctionnel pour test local, PAS un service SaaS prêt à commercialiser.**
+Version 0.8 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
 
-Une base de projet en français, multi-sociétés (tenants) pour la livraison au Maroc. Les sociétés de transport externes (ex. Oscario à Tanger) **gardent leurs propres logiciels** : nous exportons des bordereaux Excel XLSX pour import chez elles et elles communiquent les changements de statut par API. Le livreur interne utilise **le même site web** avec son compte et une interface mobile dédiée, sans application séparée.
+## Périmètre livré
 
-## Fonctionnalités réellement implémentées
+- Commandes externes et commandes stock marchand, réservation FIFO atomique, contrôle SKU/code-barres et quantités avant sortie, bons de préparation et tickets privés Code128/QR.
+- Catalogue par marchand, bons de réapprovisionnement par dépôt ou collecte, ramasseur/véhicule, réceptions partielles, cartons, unités conformes/endommagées, écarts et justificatifs.
+- Quarantaine séparée du disponible, traitement approuvé avec preuve, inventaires physiques soumis puis validés, mouvements de stock conservés et soldes de migration identifiés.
+- Demandes de ramassage par boutique/fournisseur, point et rendez-vous ; ramasseur et véhicule personnel ou société ; collecte au scan, manquants et réception warehouse distincte.
+- Containers par ville : attendus/scannés/manquants, contrôle destination/doublons, fermeture, Excel du lot et départ physique.
+- Réception agence, périmètre propre à chaque agence, tournées, tentatives, reports datés, refus, injoignable, perte/dommage et colis retrouvé.
+- Retours et échanges : demande, autorisation, conducteur, transport, réception, inspection, stock conforme, remise au marchand ou nouvel envoi avec nouveau tracking.
+- Réclamations : conversation, agent support, priorité, délai cible configurable, notes internes privées, pièces PNG/JPEG/PDF, résolution et réouverture.
+- COD déclaré, remise, écart de caisse, rapprochement, tarifs marchands, relevés, références de versement, ajustements et report des dettes. Montants en centimes entiers.
+- Notifications internes, audit, désactivation des comptes et révocation serveur des sessions.
 
-- Inscription d'une société indépendante, connexion à l'aide de **code société + email + mot de passe**, session HttpOnly SameSite, rôles `ADMIN`, `OPERATIONS`, `DRIVER`, `MERCHANT`, `FINANCE`.
-- Cloisonnement des lectures et écritures par `tenant_id` dans les requêtes du backend ; contrôles de permissions.
-- Colis : création, suivi interne, attribution **manuelle** aux partenaires (plusieurs transporteurs par ville) ou aux livreurs internes, historique des statuts.
-- Sociétés partenaires : villes couvertes, tarifs indicatifs, contacts, accès API distinct par partenaire, rotation de la clé et mapping de statuts via API.
-- Import **CSV et XLSX**, avec validation, prévention des doublons, rapport des erreurs. Export Excel XLSX avec manifest enregistré, pour envoi **manuel** via WhatsApp à un partenaire.
-- Scan externe : endpoint API authentifié ; les événements `RAMASSE`, `EN_COURS`, `EN_LIVRAISON`, `LIVRE`, etc. actualisent automatiquement le colis **si le système externe les envoie**. Idempotence via `eventId` ; rejet des transitions régressives.
-- Espace livreur mobile dans le même site (liste des colis qui lui sont attribués, téléphone, mise à jour de statuts).
-- Espace marchand basé sur le `merchant_id` explicite. Consultations limitées aux colis de ce marchand.
-- Suivi public par numéro de tracking à forte entropie (sans téléphone, adresse complète ou COD) ; masquer le suivi si même tracking présent chez plusieurs tenants.
-- Stock / fulfillment : création SKU, réception de lots, quantités disponibles/réservées, réservation FIFO transactionnelle et sortie du stock après préparation.
-- Finance initiale : collecte COD confirmée manuellement sur une commande `DELIVERED`, entrée de journal non duplicable. **Pas encore de règlement ou rapprochement complet**.
-- Metering SaaS : volume mensuel de commandes / événements partenaire / exports. **Les abonnements payants ne sont pas encore activés.**
-- Tests automatiques API, permissions, isolation multi-tenant, XLSX et FIFO (sans accès Internet ni packages externes).
+Le [cadrage métier et les sources marocaines](docs/OPERATIONS_MAROC.md) distingue les pratiques publiées et les choix propres à TransitFlow. Voir aussi l’[API](docs/API.md).
 
-## Prérequis
 
-- **Node.js 22.13+** (module `node:sqlite` expérimental dans Node 22)
-- **Python 3** dans `PATH`, uniquement pour conversion XLSX (script standard library)
-- Aucun `npm install` nécessaire dans ce prototype.
+## Warehouse & stock v0.8
 
-## Démarrer en local
+1. **Catalogue produits** : le marchand déclare ses SKU, codes-barres et seuils d’alerte. Deux marchands peuvent utiliser le même SKU sans partager leur stock.
+2. **Entrées de stock** : créer un bon avec cartons et quantités annoncés. En collecte, affecter ramasseur et véhicule puis confirmer les cartons chez le marchand. Cette étape ne crée pas encore de stock warehouse.
+3. **Réception** : saisir les cartons réellement arrivés, le réceptionnaire, la preuve et les quantités conformes ou endommagées par SKU. Plusieurs réceptions sont possibles. Les conformes deviennent des lots FIFO ; les dommages vont en quarantaine. Clôturer le bon avec un motif pour tout manque, surplus, dommage ou écart de cartons.
+4. **Préparation stock** : ouvrir « Contrôler produits » depuis Réception & préparation, scanner chaque SKU/code-barres et sa quantité, puis scanner le tracking du colis. Un produit absent, une quantité supplémentaire ou un bon incomplet bloque la sortie.
+5. **Inventaires** : le magasinier compte les lots d’un marchand/emplacement puis soumet. Direction/exploitation valide les écarts avec motif. Si stock, réservations ou lots ont changé entre-temps, recommencer ; les réservations ne peuvent pas devenir supérieures au physique.
+6. **Quarantaine & mouvements** : direction/exploitation peut lever la quarantaine, remettre au marchand ou écarter physiquement des unités avec motif et preuve. Le journal conserve les variations conformes/réservées/quarantaine et l’auteur. Les anciens lots reçoivent un solde de migration, sans reconstituer un passé absent.
+
+Les preuves sont des noms et références déclarées. La réception directe historique reste accessible pour les reprises de stock simples ; les réceptions avec bon suivent le parcours ci-dessus. Les produits endommagés des retours colis gardent leur dossier retour et ne sont pas dupliqués dans la quarantaine d’approvisionnement. Les pages marchands et les documents restent limités à leur magasin.
+
+## Espace de travail v0.7
+
+Navigation regroupée par exploitation, relation client, finance et ressources ; tableau de bord adapté au rôle avec priorités réelles, répartition des colis, principales villes et derniers mouvements. La liste colis propose recherche tracking/nom/téléphone/ID/marchand, filtres ville/statut/source/marchand, tri, pagination et export CSV des lignes sélectionnées. Les comptes conservent leurs périmètres côté serveur.
+
+Les dossiers ramassage/retour/tournée/réclamation affichent leur progression et se rouvrent depuis leur URL. Les listes disposent de recherche, filtre d’état et pagination sur les éléments chargés. La création d’une commande est organisée par origine, destinataire et encaissement ; les erreurs restent visibles dans le formulaire. Les fenêtres prennent en charge Échap et la navigation clavier. L’interface mobile dispose d’une navigation dédiée, de cartes colis et de champs de saisie adaptés ; le portail stock/règlements partage la même présentation.
+
+## Comptes et périmètres
+
+| Compte | Travail principal | Périmètre |
+| --- | --- | --- |
+| ADMIN | Société, villes, comptes, paramètres et audit | Société |
+| OPERATIONS | Warehouse, dispatch, tournées, retours, support | Société ; lecture caisse, sans validation de paiement |
+| DISPATCHER | Ramassages, véhicules, envois et tournées | Société ; sans comptabilité ni entrée stock |
+| WAREHOUSE | Réception/préparation, FIFO, tri et inspection retours | Warehouse ; sans caisse |
+| PICKUP_DRIVER | Collecte et transport des retours affectés | Ses missions et son véhicule |
+| AGENCY_MANAGER | Arrivées, tournées, livreurs, retours et remises | Son agence |
+| AGENCY_AGENT | Réception et consultation des colis/envois | Son agence |
+| DRIVER | Tournées, tentatives, preuve nominative et caisse | Ses colis et tournées |
+| SUPPORT | Contacts, réclamations et autorisation retours | Société ; lecture ramassages, sans stock ni caisse |
+| FINANCE | Rapprochement, tarifs, ajustements, relevés, versements | Société ; sans mouvement physique |
+| MERCHANT | Commandes, stock, collecte/retour, réclamations et relevés | Son magasin |
+
+Le serveur filtre aussi les documents et pièces jointes. Ramasseur et livreur sont deux rôles distincts ; le compte polyvalent reste à développer.
+
+## Parcours physique
+
+1. Le marchand crée EXTERNAL ou STOCK. Les produits appartiennent à son magasin et sont réservés en FIFO ; une rupture annule toute la transaction.
+2. Le dispatcher affecte ramasseur et véhicule à une demande. Le scan chez le marchand donne COLLECTED. Les absents sont motivés et libérés pour une nouvelle demande.
+3. Le magasinier imprime bon et ticket, contrôle chaque SKU/code-barres et sa quantité pour STOCK, puis scanne le tracking : PICKED_UP. Les réservations sortent physiquement une seule fois. Un dépôt direct reste possible hors demande active.
+4. Chaque colis attendu est scanné dans le container de sa ville avant fermeture. Excel et départ sont séparés. Le départ donne IN_TRANSIT.
+5. L’agence réceptionne au scan (AT_AGENCY), prépare une tournée et confirme le départ (OUT_FOR_DELIVERY). Chaque arrêt a un résultat avant clôture.
+6. Livrer exige réceptionnaire et COD exact. Un report exige une date future, un échec un motif. Déroger à un report/limite d’essais exige un motif responsable audité.
+7. Le retour suit son propre dossier. La réception seule n’ajoute jamais de stock vendable. L’inspection autorise stock conforme, remise au marchand ou nouveau tracking lié à l’ancien.
+
+Douchette clavier avec Entrée, saisie tracking/UUID et URL QR sont acceptées. Pas de scan caméra ni de mode hors ligne.
+
+## Exemple comptable
+
+Tanger : COD **200 MAD**, coût agence **20 MAD**, tarif marchand **30 MAD**.
+
+| Flux | Montant |
+| --- | --- |
+| COD déclaré agence | 200 MAD |
+| Frais agence retenus, figés sur l’envoi | 20 MAD |
+| Remise nette attendue | 180 MAD |
+| Relevé marchand après rapprochement, hors ajustement | 170 MAD |
+| Écart commercial avant autres charges | 10 MAD |
+
+Une remise de moins de 180 MAD reste en litige et ne crédite pas automatiquement le COD marchand. Un rapprochement exact comptabilise le brut une seule fois. Le livreur interne remet le brut ; aucune commission personnelle n’est déduite automatiquement.
+
+Un prépayé peut produire des frais et un relevé débiteur. Un remboursement après livraison est un ajustement distinct : le relevé payé reste inchangé, la dette se reporte. Aucun montant négatif n’est marqué comme virement sortant.
+
+`/merchant.html` conserve les livraisons hier/24h/date au calendrier Africa/Casablanca, le stock détaillé, les relevés et impressions. Ce sont des documents de suivi interne, pas des factures fiscales ni des ordres bancaires.
+
+## Démarrage
+
+Prérequis : **Node.js 22.13+**, **Python 3** dans PATH pour XLSX. Aucune dépendance npm de production.
 
 ```bash
 cp .env.example .env
-# IMPORTANT : remplacez SESSION_SECRET par une chaîne générée aléatoirement
 node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
-# collez la valeur obtenue dans .env
+# Mettre cette valeur dans SESSION_SECRET de .env.
 npm start
 ```
 
-Ouvrez `http://localhost:3000` puis cliquez sur **Créer un compte société**. Créez un compte admin de votre société et un transporteur partenaire. Pour le livreur, créez un utilisateur de rôle `DRIVER`. Le livreur se connecte au **même URL**.
+Ouvrir http://localhost:3000, configurer la société une fois, puis villes, marchands, comptes et stock. Définir PUBLIC_BASE_URL sur l’origine réelle ; derrière HTTPS, activer COOKIE_SECURE=true. Base : data/delivery.sqlite.
 
-En développement : `npm run dev` (Node avec watch). Pour les tests : `npm run check`.
+Dans GitHub Codespaces, le serveur détecte le lien HTTPS du port à partir des variables de l’environnement Codespaces si PUBLIC_BASE_URL est vide ou conserve la valeur locale du fichier exemple. Le démarrage affiche `Browser origin` : c’est l’origine exacte autorisée pour les formulaires et les tickets. Une URL publique explicitement configurée reste prioritaire. Aucun en-tête Host/X-Forwarded-Host reçu du navigateur ne détermine cette autorisation. Le proxy Codespaces peut réécrire Origin vers localhost : cette variante est acceptée uniquement pour le Codespace et le port courants, avec X-TransitFlow-Origin égal à l’origine publique, l’en-tête anti-CSRF habituel et aucune métadonnée Fetch indiquant un autre site. Aucun joker CORS ni acceptation générale de localhost n’est ajouté. Une origine refusée est journalisée sans données de connexion.
 
-Le fichier `.env` est chargé via l'option native Node (voir `package.json`). La base locale est créée dans `data/delivery.sqlite` et ignorée par git.
+Si un serveur déjà démarré répond « Origine non autorisée », l’arrêter avec Ctrl+C puis le relancer avec l’origine exacte copiée depuis la barre d’adresse de l’application, sans chemin ni paramètres :
 
-## Exemple : Casablanca → Oscario (Tanger)
-
-1. Admin crée le partenaire **Oscario**, choisit `Tanger` et copie **une seule fois** la clé API qui est générée.
-2. Crée les commandes et choisit Oscario comme transporteur (ou utilise **Affecter** sur des colis déjà créés).
-3. Dans **Transporteurs partenaires**, clique **Export XLSX**. Un bordereau `MAN-...` est créé, les colis passent à `EXPORTED`. Cela ne veut **PAS** dire que les colis ont été physiquement remis.
-4. L'employé envoie le fichier XLSX par WhatsApp, manuellement. Oscario importe le fichier dans son propre système.
-5. Le salarié d'Oscario scanne les barcodes. Une **intégration développée avec l'API réelle d'Oscario** envoie ensuite un changement de statut vers notre endpoint.
-6. Le colis devient `PICKED_UP` (Ramassé). Les autres statuts sont répercutés dans l'espace marchand et le suivi public.
-7. COD/versement reste séparé du statut de livraison : une commande livrée n'est pas automatiquement considérée comme encaissée ou payée au marchand.
-
-**IMPORTANT** : le connecteur Oscario n'est **pas branché**. Nous ne disposons pas encore de sa documentation API. Le protocole générique entrant fonctionne (voir `docs/API.md`) mais il faut un adaptateur qui mappe son authentification, son format, les identifiants et ses notifications.
-
-## Architecture et limitations
-
-```
-public/            UI responsive French, login, dashboards, PWA manifest
-src/server.mjs     HTTP API, auth, permission checks, business transactions
-src/db.mjs         SQLite schema multi-tenant (MVP local)
-src/domain.mjs     Shipment lifecycle, partner status mapping
-src/auth.mjs       Password hashing, signed session, API partner keys
-src/excel.mjs      Import CSV + bridge XLSX
-scripts/excel.py   Pure-stdlib ZIP/XML XLSX reader/writer
-tests/             Node tests
-examples/          Example Excel-compatible CSV
-docs/              Architecture, API, roadmap, production checklist
+```bash
+PUBLIC_BASE_URL="https://votre-application.example" npm start
 ```
 
-This version intentionally uses dependency-free Node.js + SQLite to make the first working proof-of-concept testable here. **For production**, migrate to PostgreSQL, an audited/auth library with MFA and recovery, a background queue and jobs for integrations, object storage, monitoring and backup restores, proper tenant-level database RLS or per-tenant storage, and a payment provider for subscription billing. See `docs/ROADMAP.md`.
+Recharger ensuite l’application. Modifier le fichier .env ou un export dans un autre terminal ne change pas la configuration d’un processus déjà démarré.
 
-## Security / confidentiality
+```bash
+npm run check
+```
 
-- `SESSION_SECRET` must be strong and persistent. Never commit `.env` or `data/`.
-- If deployed behind HTTPS proxy, set `PUBLIC_BASE_URL=https://your-domain` and `COOKIE_SECURE=true`.
-- Browser mutation requests use same-origin protection, a custom anti-CSRF header and SameSite cookies; API partners use independent Bearer keys stored as hashes.
-- The public tracking endpoint has no rate limiting in the MVP. Do not expose publicly without abuse controls and threat review.
-- This prototype does not have full privacy/compliance features, MFA, password reset, backups, anti-fraud, reliable financial ledger, and payment collection/settlements.
-- **Do not use this pilot for real COD settlements or production customer data before a full review.**
+La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, scan produits, collecte de réapprovisionnement, réception avec écarts, inventaire validé, quarantaine, journal stock, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
 
-© Project source is provided to the user for further development. No third-party logos or branding included.
+## Architecture et migration
 
-## Colis workflow — update v0.2
+| Module dans src/ | Responsabilité |
+| --- | --- |
+| server.mjs, auth.mjs, access.mjs | HTTP, comptes, sessions révocables et permissions |
+| db.mjs, workflow-db.mjs | Schéma, migration transactionnelle et contrôle FK |
+| logistics.mjs | Agences, FIFO, préparation, containers et XLSX |
+| pickups.mjs, delivery.mjs | Collectes, véhicules, arrivées, tournées et tentatives |
+| returns.mjs, claims.mjs | Retours, inspection, échanges et service client |
+| cash.mjs, merchant-portal.mjs | Remises, tarifs, relevés et ajustements |
+| workflows.mjs, workflow-shared.mjs | Pilotage, notifications et contrôles partagés |
 
-The authenticated **Gestion des colis** now includes role-scoped actions:
-parcel information, chronological status events, internal remarks, controlled
-corrections, COD price changes (company ADMIN only), and 100 × 150 mm printable
-shipping tickets. The ticket embeds an offline-generated Code128 barcode and a
-QR code leading to a redacted public tracking timeline.
+L’interface principale utilise public/app.js, operations.js, workflows.js et workflow-forms.js. Le portail détaillé utilise merchant.js.
 
-On small screens, orders render as responsive cards rather than a wide table.
-The `PAYMENT` indicator refers specifically to **confirmed COD collection**, not
-merchant payout or inter-company settlement. Corrections made after an Excel
-partner export are marked `Modification à transmettre` until reconciled; this
-version does not yet push edits to an external partner's API.
+La migration conserve commandes, utilisateurs, stock, événements et relevés. Elle transforme les anciens transporteurs multi-villes en agences et élargit les rôles sans supprimer les références utilisateurs. Plusieurs sociétés indépendantes dans une base sont refusées atomiquement. Sauvegarder avant mise à niveau.
 
-For usable printed QR links outside localhost, set `PUBLIC_BASE_URL` to the
-actual HTTPS origin during deployment. Browser Print / Save as PDF is used;
-there is no dedicated server-side PDF renderer.
+## Limites
 
-The Code128 encoder is implemented locally; the QR encoder carries a vendored
-MIT-licensed Kazuhiko Arase implementation under `src/vendor/qrcode/` with its
-licence notice. New server integration tests cover tenant isolation for labels,
-HTML escaping, role permissions, price edits, and partner update flags.
-
-## Espace marchand enrichi — v0.4 (Livraisons 24h, relevés, stock détaillé)
-
-- Ouvrir `/merchant.html` après connexion avec un compte marchand. Le comptable peut accéder au même écran pour consulter un marchand, configurer des tarifs et préparer un relevé.
-- Rapport `Hier`, `24 heures`, `Aujourd'hui` ou date précise en fuseau **Africa/Casablanca** : colis livrés, COD déclaré, collecte confirmée, montant restant à collecter. Un statut « Livré » **ne prouve pas** le versement au marchand.
-- Tarification par marchand et ville (ou `*` pour un tarif par défaut), en centimes MAD. Aucun montant net n'est inventé si le tarif manque.
-- Relevés journaliers **brouillon → validé → marqué versé**. Les lignes sont une photographie immuable des colis livrés, COD encaissés et frais appliqués; un colis ne peut apparaître que dans un seul relevé. L'impression « Enregistrer en PDF » utilise le navigateur. **Un relevé ne constitue pas une facture fiscale, ni une preuve de virement bancaire.**
-- Inventaire marchand par SKU : quantité physique, quantité réservée, disponible, répartition par dépôt/emplacement, lots FIFO, allocations. Le marchand n'accède qu'à ses propres produits. Les SKU doivent être associés à son `merchant_id` lors de leur création; l'administrateur peut attribuer les anciens SKU non associés après vérification.
-- Le marchand peut créer une commande et réserver facultativement un SKU en FIFO dans la même transaction. Si le stock est insuffisant, la création de commande est annulée.
-- Tests : isolation des marchands, quantités FIFO, refus des sur-réservations, collecte COD, relevés et versements étape par étape.
-
-API : `GET /api/merchant/overview?period=yesterday|today|24h|date&date=AAAA-MM-JJ`, `GET /api/merchant/stock`, `GET /api/merchant/statements`, `POST /api/merchant/orders`, `GET /api/finance/merchant-list`, `POST /api/finance/merchant-rates`, `POST /api/finance/merchant-statements`, `POST /api/finance/merchant-statements/:id/confirm`, `POST .../:id/mark-paid`. L'API comptable est limitée à ADMIN/FINANCE. Voir les validations dans le code.
-
-**Limites MVP** : pas de virements automatiques, contrôle bancaire, factures fiscales ou rapprochement intercompagnies complet. Avant utilisation réelle des fonds COD, prévoir les contrôles comptables, une base PostgreSQL multi-tenant, des sauvegardes et une validation fiscale/juridique.
+Les parcours sont exécutables ; l’application n’est pas certifiée prête pour une exploitation à grande échelle. La [suite du périmètre](docs/ROADMAP.md) comprend connecteurs partenaires réels, banques, signature/photo/OTP, approvisionnement SKU, multi-hubs, multi-cartons/livraison partielle, fiscalité, MFA/récupération, sauvegardes et charge. Les frais spéciaux de retour/stockage/ramassage utilisent un ajustement motivé ; aucun contrat d’un autre opérateur n’est appliqué automatiquement.
