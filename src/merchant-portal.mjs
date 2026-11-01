@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {stockMovement} from './stock-ledger.mjs';
 
 const clean=(value,max=160)=>String(value??'').trim().slice(0,max);
 const bad=(status,message)=>Object.assign(new Error(message),{status});
@@ -187,7 +188,15 @@ export async function merchantRoute(ctx){
   if(product.merchant_id&&product.merchant_id!==merchantId)throw bad(409,'Produit déjà attribué à un autre marchand');
   const other=stmt(`SELECT 1 FROM stock_allocations a JOIN shipments s ON s.id=a.shipment_id AND s.company_id=a.company_id WHERE a.company_id=? AND a.product_id=? AND s.merchant_id IS NOT ? LIMIT 1`,companyId,productId,merchantId);
   if(other)throw bad(409,'Produit déjà réservé à un autre marchand');
-  try{tx(()=>{run('UPDATE inventory_products SET merchant_id=? WHERE company_id=? AND id=?',merchantId,companyId,productId);audit(companyId,user.id,'PRODUCT_MERCHANT_ASSIGNED','product',productId,{merchantId});});}catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Ce marchand possède déjà ce SKU ou ce code-barres');throw e;}
+  try{tx(()=>{
+   const lots=product.merchant_id===null?all('SELECT * FROM stock_lots WHERE product_id=? AND company_id=?',productId,companyId):[];
+   // Balance the old unowned stock against its new merchant account. These two
+   // entries transfer ownership only; they do not add or remove physical units.
+   for(const lot of lots)stockMovement(ctx,{productId,lotId:lot.id,merchantId:null,kind:'OWNER_TRANSFER_OUT',physical:-lot.quantity_on_hand,reserved:-lot.quantity_reserved,entityType:'ownership',entityId:productId,note:'Attribution initiale au marchand, sans déplacement physique',eventKey:'OWNER_OUT:'+lot.id});
+   run('UPDATE inventory_products SET merchant_id=? WHERE company_id=? AND id=?',merchantId,companyId,productId);
+   for(const lot of lots)stockMovement(ctx,{productId,lotId:lot.id,merchantId,kind:'OWNER_TRANSFER_IN',physical:lot.quantity_on_hand,reserved:lot.quantity_reserved,entityType:'ownership',entityId:productId,note:'Stock initial attribué au marchand, sans déplacement physique',eventKey:'OWNER_IN:'+lot.id});
+   audit(companyId,user.id,'PRODUCT_MERCHANT_ASSIGNED','product',productId,{merchantId});
+  });}catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Ce marchand possède déjà ce SKU ou ce code-barres');throw e;}
   return send(res,200,{ok:true,productId,merchantId});
  }
  if(method==='POST'&&path==='/api/finance/merchant-statements'){

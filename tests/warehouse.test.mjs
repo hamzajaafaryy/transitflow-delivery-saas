@@ -132,3 +132,14 @@ test('quarantine dispositions require responsible approval and proof, never exce
   const ledger=(await t.request('/api/workflow/stock-movements',{as:'merchant'})).value.movements;assert.equal(ledger.reduce((n,l)=>n+l.physical_delta,0),8);assert.equal(ledger.reduce((n,l)=>n+l.quarantine_delta,0),0);
  }finally{await t.stop();}
 });
+
+test('assigning unowned legacy stock balances merchant and company movement totals without duplicating stock',async()=>{
+ const t=await start();try{
+  const m=await t.merchant(),p=await t.request('/api/inventory/products',{method:'POST',data:{sku:'INITIAL',name:'Reprise de stock'}});
+  await t.request('/api/inventory/receive',{method:'POST',data:{productId:p.value.id,quantity:6,location:'INITIAL-A'}});
+  const assign=()=>t.request('/api/finance/merchant-product-owner',{method:'POST',data:{productId:p.value.id,merchantId:m}});assert.equal((await assign()).status,200);assert.equal((await assign()).status,200);
+  const merchant=(await t.request('/api/workflow/stock-movements',{as:'merchant'})).value.movements;assert.equal(merchant.length,1);assert.equal(merchant[0].kind,'OWNER_TRANSFER_IN');assert.equal(merchant.reduce((n,l)=>n+l.physical_delta,0),6);
+  const total=(await t.request('/api/workflow/stock-movements')).value.movements;assert.equal(total.length,3);assert.equal(total.reduce((n,l)=>n+l.physical_delta,0),6);assert.equal((await t.request('/api/merchant/stock',{as:'merchant'})).value.summary.unitsPhysical,6);
+  await t.merchant('Autre','other');assert.equal((await t.request('/api/workflow/stock-movements',{as:'other'})).value.total,0);
+ }finally{await t.stop();}
+});
