@@ -1,3 +1,5 @@
+import {stockMovement} from './stock-ledger.mjs';
+import {createProduct} from './warehouse-shared.mjs';
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
@@ -70,7 +72,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,shipId,user.company_id,tracking,merchantId,agency.id,driverId,recipient,phone,agency.city,address,description,cod,status,t,t,source,agency.fee_centimes);}
   catch(e){if(String(e).includes('UNIQUE'))throw fail(409,`Tracking dupliqué: ${tracking}`);throw e;}
   run('UPDATE shipments SET sector=?,fragile=?,allow_open=? WHERE id=? AND company_id=?',sanitize(data.sector,100),data.fragile?1:0,data.allowOpen?1:0,shipId,user.company_id);
-  if(source==='STOCK')reserveItems({stmt,all,run,companyId:user.company_id},{id:shipId,merchant_id:merchantId},items);
+  if(source==='STOCK')reserveItems({stmt,all,run,companyId:user.company_id,user},{id:shipId,merchant_id:merchantId},items);
   run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,actor_id,created_at) VALUES(?,?,?,?,?,?,?)',id(),user.company_id,shipId,status,'INTERNAL',user.id,t);
   return {id:shipId,tracking,status,source,agencyId:agency.id};
  }
@@ -86,8 +88,8 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   const t=now();
   if(status==='CANCELLED'){
    run("UPDATE pickup_items SET state='MISSING',active=0,note='Commande annulée avant collecte' WHERE shipment_id=? AND company_id=? AND state='EXPECTED'",sh.id,user.company_id);
-   const reserved=all("SELECT id,lot_id,quantity FROM stock_allocations WHERE company_id=? AND shipment_id=? AND state='RESERVED'",user.company_id,sh.id);
-   for(const a of reserved){run('UPDATE stock_lots SET quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.lot_id,user.company_id);run("UPDATE stock_allocations SET state='RELEASED' WHERE id=? AND company_id=?",a.id,user.company_id);}
+   const reserved=all("SELECT id,lot_id,quantity,product_id FROM stock_allocations WHERE company_id=? AND shipment_id=? AND state='RESERVED'",user.company_id,sh.id);
+   for(const a of reserved){run('UPDATE stock_lots SET quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.lot_id,user.company_id);run("UPDATE stock_allocations SET state='RELEASED' WHERE id=? AND company_id=?",a.id,user.company_id);stockMovement({stmt,run,companyId:user.company_id,user},{productId:a.product_id,lotId:a.lot_id,kind:'RELEASE',reserved:-a.quantity,entityType:'shipment',entityId:sh.id,eventKey:'RELEASE:'+a.id});}
   }
   run('UPDATE shipments SET status=?,updated_at=?,delivered_at=CASE WHEN ?=\'DELIVERED\' THEN ? ELSE delivered_at END,external_status=COALESCE(?,external_status),external_updated_at=CASE WHEN ? IS NULL THEN external_updated_at ELSE ? END WHERE id=? AND company_id=?',status,t,status,t,externalStatus,externalStatus,t,sh.id,user.company_id);
   run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,external_event_id,note,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',id(),user.company_id,sh.id,status,source,externalEventId,sanitize(note,400),user.id||null,t);
@@ -99,7 +101,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   try{
-   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.7.0'});
+   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.8.0'});
    if(method==='GET'&&path==='/api/auth/setup'){const company=stmt('SELECT name FROM company WHERE singleton=1');return send(res,200,{setupRequired:!company,companyName:company?.name||null});}
    if(method==='GET'&&mregex(path,/^\/api\/tracking\/([a-zA-Z0-9_-]{4,64})$/)){
     const tracking=decodeURIComponent(path.split('/').at(-1));
@@ -153,7 +155,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     });return send(res,200,result);
    }
    if(method==='GET'&&!path.startsWith('/api/')){
-    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/ui.js':'ui.js','/styles.css':'styles.css','/workspace.css':'workspace.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
+    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/warehouse.js':'warehouse.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/ui.js':'ui.js','/styles.css':'styles.css','/workspace.css':'workspace.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
     const filename=assets[path];if(!filename)throw fail(404,'Page introuvable');
     const data=readFileSync(resolve(root,filename));res.writeHead(200,{'Content-Type':mime[extname(filename)]||'application/manifest+json','Cache-Control':'no-store'});return res.end(data);
    }
@@ -359,7 +361,8 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    }
    if(method==='GET'&&path==='/api/inventory'){
     requirePermission(user,'inventory.read');
-    const products=all(`SELECT p.id,p.sku,p.name,p.merchant_id,
+    const products=all(`SELECT p.id,p.sku,p.name,p.merchant_id,p.barcode,p.low_stock_threshold,
+      (SELECT COALESCE(SUM(q.quantity_remaining),0) FROM stock_quarantine q WHERE q.company_id=p.company_id AND q.product_id=p.id) AS quarantined,
       COALESCE(SUM(l.quantity_on_hand),0) AS on_hand,
       COALESCE(SUM(l.quantity_reserved),0) AS reserved
       FROM inventory_products p LEFT JOIN stock_lots l ON l.product_id=p.id AND l.company_id=p.company_id
@@ -367,19 +370,13 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     return send(res,200,{products:products.map(p=>({...p,available:p.on_hand-p.reserved}))});
    }
    if(method==='POST'&&path==='/api/inventory/products'){
-    requirePermission(user,'inventory.write');const data=await json(req),sku=sanitize(data.sku,70).toUpperCase(),name=sanitize(data.name,160),merchantId=data.merchantId||null;
-    if(merchantId&&!stmt('SELECT 1 FROM merchants WHERE id=? AND company_id=?',merchantId,companyId))throw fail(400,'Marchand invalide');
-    if(!/^[A-Z0-9_-]{2,70}$/.test(sku)||!name)throw fail(400,'SKU et nom requis');
-    const productId=id();
-    try{run('INSERT INTO inventory_products VALUES(?,?,?,?,?,?)',productId,companyId,sku,name,merchantId,now());}
-    catch(e){if(String(e).includes('UNIQUE'))throw fail(409,'SKU déjà utilisé');throw e;}
-    audit(companyId,user.id,'PRODUCT_CREATED','product',productId,{sku});return send(res,201,{id:productId});
+    requirePermission(user,'inventory.write');const data=await json(req);return send(res,201,tx(()=>createProduct({stmt,run,companyId,user,audit},data)));
    }
    if(method==='POST'&&path==='/api/inventory/receive'){
     requirePermission(user,'inventory.write');const data=await json(req),productId=sanitize(data.productId,40),qty=Number(data.quantity),location=sanitize(data.location,70)||'ENTREPOT';
     if(!Number.isSafeInteger(qty)||qty<1||qty>1000000)throw fail(400,'Quantité invalide');
     if(!stmt('SELECT 1 FROM inventory_products WHERE id=? AND company_id=?',productId,companyId))throw fail(404,'Produit introuvable');
-    const lotId=id();tx(()=>{run('INSERT INTO stock_lots(id,company_id,product_id,received_at,quantity_on_hand,location) VALUES (?,?,?,?,?,?)',lotId,companyId,productId,now(),qty,location);audit(companyId,user.id,'STOCK_RECEIVED','stock_lot',lotId,{qty,productId});});
+    const lotId=id();tx(()=>{run('INSERT INTO stock_lots(id,company_id,product_id,received_at,quantity_on_hand,location) VALUES (?,?,?,?,?,?)',lotId,companyId,productId,now(),qty,location);audit(companyId,user.id,'STOCK_RECEIVED','stock_lot',lotId,{qty,productId});stockMovement({stmt,run,companyId,user},{productId,lotId,kind:'RECEIPT',physical:qty,entityType:'direct_receipt',entityId:lotId,note:data.proofReference||'Réception directe',eventKey:'RECEIPT:'+lotId});});
     return send(res,201,{lotId,quantity:qty});
    }
    if(method==='POST'&&path==='/api/inventory/reserve'){
@@ -391,13 +388,13 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     const stockProduct=stmt('SELECT merchant_id FROM inventory_products WHERE id=? AND company_id=?',productId,companyId);
     if(!stockProduct)throw fail(404,'Produit introuvable');
     const targetMerchant=stmt('SELECT merchant_id FROM shipments WHERE id=? AND company_id=?',shipId,companyId);
-    if(stockProduct.merchant_id&&targetMerchant?.merchant_id!==stockProduct.merchant_id)throw fail(403,'Stock associé à un autre marchand');
+    if(!stockProduct.merchant_id||targetMerchant?.merchant_id!==stockProduct.merchant_id)throw fail(403,'Affectez ce stock au marchand de la commande avant de réserver');
     const allocated=tx(()=>{
       const lots=all('SELECT id,quantity_on_hand,quantity_reserved FROM stock_lots WHERE company_id=? AND product_id=? AND quantity_on_hand>quantity_reserved ORDER BY received_at,id',companyId,productId);
       if(lots.reduce((sum,l)=>sum+l.quantity_on_hand-l.quantity_reserved,0)<qty)throw fail(409,'Stock insuffisant');
       let left=qty;for(const lot of lots){if(left===0)break;const take=Math.min(left,lot.quantity_on_hand-lot.quantity_reserved);
        run('UPDATE stock_lots SET quantity_reserved=quantity_reserved+? WHERE id=? AND company_id=?',take,lot.id,companyId);
-       run('INSERT INTO stock_allocations VALUES (?,?,?,?,?,?,?,?)',id(),companyId,shipId,productId,lot.id,take,'RESERVED',now());left-=take;
+       const allocationId=id();run('INSERT INTO stock_allocations VALUES (?,?,?,?,?,?,?,?)',allocationId,companyId,shipId,productId,lot.id,take,'RESERVED',now());stockMovement({stmt,run,companyId,user},{productId,lotId:lot.id,kind:'RESERVE',reserved:take,entityType:'shipment',entityId:shipId,eventKey:'RESERVE:'+allocationId});left-=take;
       }
       run("UPDATE shipments SET order_source='STOCK' WHERE id=? AND company_id=?",shipId,companyId);
       audit(companyId,user.id,'STOCK_RESERVED','shipment',shipId,{productId,quantity:qty});return qty;

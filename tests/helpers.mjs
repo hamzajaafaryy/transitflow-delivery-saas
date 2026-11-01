@@ -23,7 +23,11 @@ export async function start({bootstrap=true,db=openDb(':memory:')}={}){
   const email=as+'@example.ma',u=await request('/api/users',{method:'POST',data:{name,email,password,role:'MERCHANT',merchantId:m.value.id}});assert.equal(u.status,201);assert.equal((await login(email,as)).status,200);return m.value.id;
  };
  const order=(data={},as='admin')=>request('/api/shipments',{method:'POST',as,data:{recipient:'Client Test',phone:'0612345678',city:'Tanger',address:'Rue Principale 12',cod:200,...data}});
- const pickup=(scan,as='admin')=>request('/api/operations/ramassage',{method:'POST',as,data:{scan}});
+ const pickup=async(scan,as='admin')=>{
+  const code=/^https?:\/\//.test(scan)?new URL(scan).pathname.split('/').at(-1):scan,sh=db.prepare('SELECT id,order_source,ramassed_at FROM shipments WHERE id=? OR tracking=?').get(code,code);
+  if(sh?.order_source==='STOCK'&&!sh.ramassed_at){const detail=await request('/api/workflow/picking/'+sh.id,{as});if(detail.status===200)for(const p of detail.value.items){if(p.scanned<p.expected){const result=await request('/api/workflow/picking/'+sh.id+'/scan',{method:'POST',as,data:{productScan:p.product_id,quantity:p.expected-p.scanned,requestId:crypto.randomUUID()}});assert.equal(result.status,201,JSON.stringify(result.value));}}}
+  return request('/api/operations/ramassage',{method:'POST',as,data:{scan}});
+ };
  const stop=()=>new Promise(resolve=>instance.server.close(()=>{db.close();resolve();}));
  const agencies={};
  if(bootstrap){

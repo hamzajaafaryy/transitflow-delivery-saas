@@ -51,7 +51,8 @@ function findRate(ctx,merchantId,city){
   WHERE company_id=? AND merchant_id=? AND city_key IN (?, '*') ORDER BY CASE WHEN city_key=? THEN 0 ELSE 1 END LIMIT 1`,ctx.companyId,merchantId,key,key);
 }
 function stockRows(ctx,merchantId){
- const products=ctx.all(`SELECT p.id,p.sku,p.name,
+ const products=ctx.all(`SELECT p.id,p.sku,p.name,p.barcode,p.low_stock_threshold,
+ (SELECT COALESCE(SUM(q.quantity_remaining),0) FROM stock_quarantine q WHERE q.company_id=p.company_id AND q.product_id=p.id AND q.merchant_id=p.merchant_id) AS quarantined,
  COALESCE(SUM(l.quantity_on_hand),0) AS onHand,
  COALESCE(SUM(l.quantity_reserved),0) AS reserved
  FROM inventory_products p LEFT JOIN stock_lots l ON l.product_id=p.id AND l.company_id=p.company_id
@@ -71,7 +72,7 @@ function stockRows(ctx,merchantId){
  JOIN shipments s ON s.id=a.shipment_id AND s.company_id=a.company_id
  JOIN stock_lots l ON l.id=a.lot_id AND l.company_id=a.company_id
  WHERE a.company_id=? AND p.merchant_id=? AND s.merchant_id=? ORDER BY a.created_at DESC LIMIT 120`,ctx.companyId,merchantId,merchantId);
- return {products,warehouses,lots,allocations,summary:{skuCount:products.length,unitsPhysical:products.reduce((a,p)=>a+p.onHand,0),unitsReserved:products.reduce((a,p)=>a+p.reserved,0),unitsAvailable:products.reduce((a,p)=>a+p.available,0)}};
+ return {products,warehouses,lots,allocations,summary:{skuCount:products.length,unitsPhysical:products.reduce((a,p)=>a+p.onHand,0),unitsReserved:products.reduce((a,p)=>a+p.reserved,0),unitsAvailable:products.reduce((a,p)=>a+p.available,0),unitsQuarantined:products.reduce((a,p)=>a+p.quarantined,0)}};
 }
 function deliveredRows(ctx,merchantId,window){
  const rows=ctx.all(`SELECT s.id,s.tracking,s.recipient,s.city,s.status,s.cod_centimes AS codCentimes,
@@ -186,7 +187,7 @@ export async function merchantRoute(ctx){
   if(product.merchant_id&&product.merchant_id!==merchantId)throw bad(409,'Produit déjà attribué à un autre marchand');
   const other=stmt(`SELECT 1 FROM stock_allocations a JOIN shipments s ON s.id=a.shipment_id AND s.company_id=a.company_id WHERE a.company_id=? AND a.product_id=? AND s.merchant_id IS NOT ? LIMIT 1`,companyId,productId,merchantId);
   if(other)throw bad(409,'Produit déjà réservé à un autre marchand');
-  tx(()=>{run('UPDATE inventory_products SET merchant_id=? WHERE company_id=? AND id=?',merchantId,companyId,productId);audit(companyId,user.id,'PRODUCT_MERCHANT_ASSIGNED','product',productId,{merchantId});});
+  try{tx(()=>{run('UPDATE inventory_products SET merchant_id=? WHERE company_id=? AND id=?',merchantId,companyId,productId);audit(companyId,user.id,'PRODUCT_MERCHANT_ASSIGNED','product',productId,{merchantId});});}catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Ce marchand possède déjà ce SKU ou ce code-barres');throw e;}
   return send(res,200,{ok:true,productId,merchantId});
  }
  if(method==='POST'&&path==='/api/finance/merchant-statements'){

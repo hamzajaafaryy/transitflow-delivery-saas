@@ -6,6 +6,7 @@ import {returnRoute} from './returns.mjs';
 import {claimRoute} from './claims.mjs';
 import {deliveryRoute} from './delivery.mjs';
 import {cashRoute} from './cash.mjs';
+import {warehouseRoute} from './warehouse.mjs';
 
 export async function workflowRoute(ctx){
  const {path,method,user,companyId,stmt,all,run,tx,json,send,audit}=ctx;
@@ -39,8 +40,10 @@ export async function workflowRoute(ctx){
   const cityDistribution=all(`SELECT s.city,COUNT(*) AS total,SUM(CASE WHEN s.status='DELIVERED' THEN 1 ELSE 0 END) AS delivered FROM shipments s WHERE s.company_id=?${scope.clause} GROUP BY s.city ORDER BY total DESC,s.city LIMIT 6`,companyId,...scope.args);
   const recentShipments=all(`SELECT s.id,s.tracking,s.recipient,s.city,s.cod_centimes,s.status,s.created_at,m.name AS merchant_name FROM shipments s LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id WHERE s.company_id=?${scope.clause} ORDER BY s.created_at DESC,s.id DESC LIMIT 5`,companyId,...scope.args);
   const recentActivity=all(`SELECT e.status,e.created_at,s.tracking,s.city FROM shipment_events e JOIN shipments s ON s.id=e.shipment_id AND s.company_id=e.company_id WHERE s.company_id=?${scope.clause} ORDER BY e.created_at DESC,e.rowid DESC LIMIT 5`,companyId,...scope.args);
+  const intakeAllowed=['intakes.create','intakes.manage','intakes.receive','intakes.self','intakes.read'].some(p=>has(user,p)),intakes=intakeAllowed?all('SELECT state,COUNT(*) AS n FROM stock_intakes WHERE company_id=?'+(merchant?' AND merchant_id=?':driver?' AND driver_id=?':'')+' GROUP BY state',companyId,...merchant?[user.merchant_id]:driver?[user.id]:[]):[];
+  const warehouseSummary={stockIntakes:Object.fromEntries(intakes.map(i=>[i.state,i.n])),stockCountsPending:has(user,'inventory.approve')?stmt("SELECT COUNT(*) AS n FROM stock_counts WHERE company_id=? AND state='SUBMITTED'",companyId).n:0,quarantinedUnits:has(user,'inventory.read')||merchant?stmt('SELECT COALESCE(SUM(quantity_remaining),0) AS n FROM stock_quarantine WHERE company_id=?'+(merchant?' AND merchant_id=?':''),companyId,...merchant?[user.merchant_id]:[]).n:0};
   let cashHeldCentimes=null;if(has(user,'cash.manage')||has(user,'finance')||has(user,'cash.read'))cashHeldCentimes=stmt("SELECT COALESCE(SUM(amount_centimes-agency_fee_centimes),0) AS n FROM cod_receipts WHERE company_id=? AND state<>'RECONCILED'",companyId).n;else if(has(user,'cash.self'))cashHeldCentimes=stmt("SELECT COALESCE(SUM(amount_centimes-agency_fee_centimes),0) AS n FROM cod_receipts WHERE company_id=? AND state<>'RECONCILED'"+(agency?' AND holder_agency_id=?':' AND holder_user_id=?'),companyId,agency?user.agency_id||'NO_AGENCY':user.id).n;
-  return send(ctx.res,200,{cityDistribution,recentShipments,recentActivity,cashHeldCentimes,shipments:Object.fromEntries(shipments.map(x=>[x.status,x.n])),pickups:Object.fromEntries(picks.map(x=>[x.state,x.n])),returns:Object.fromEntries(returns.map(x=>[x.state,x.n])),overdueClaims,unreconciledCodCentimes:has(user,'cash.manage')||has(user,'finance')?stmt("SELECT COALESCE(SUM(amount_centimes),0) AS n FROM cod_receipts WHERE company_id=? AND state<>'RECONCILED'",companyId).n:null});
+  return send(ctx.res,200,{...warehouseSummary,cityDistribution,recentShipments,recentActivity,cashHeldCentimes,shipments:Object.fromEntries(shipments.map(x=>[x.status,x.n])),pickups:Object.fromEntries(picks.map(x=>[x.state,x.n])),returns:Object.fromEntries(returns.map(x=>[x.state,x.n])),overdueClaims,unreconciledCodCentimes:has(user,'cash.manage')||has(user,'finance')?stmt("SELECT COALESCE(SUM(amount_centimes),0) AS n FROM cod_receipts WHERE company_id=? AND state<>'RECONCILED'",companyId).n:null});
  }
  const incident=path.match(/^\/api\/workflow\/shipments\/([a-f0-9-]{36})\/(incident|recover)$/);
  if(incident&&method==='POST'){
@@ -55,6 +58,7 @@ export async function workflowRoute(ctx){
   if(!['REACHED','NO_ANSWER','WRONG_NUMBER','CALLBACK'].includes(outcome)||note.length<5||next&&next<=now())throw fail(400,'Résultat, note et date future valides requis');if(['DELIVERED','RETURNED','CANCELLED','LOST'].includes(s.status))throw fail(409,'Colis clôturé');if(stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND state NOT IN ('REQUESTED','CANCELLED','REJECTED')",companyId,s.id))throw fail(409,'Retour déjà engagé');
   tx(()=>{run('INSERT INTO contact_attempts VALUES(?,?,?,?,?,?,?,?)',id(),companyId,s.id,user.id,outcome,note,next,now());if(next){run('UPDATE shipments SET next_attempt_at=? WHERE id=? AND company_id=?',next,s.id,companyId);if(['UNREACHABLE','REFUSED','POSTPONED','AT_AGENCY'].includes(s.status))parcelEvent(ctx,s,'POSTPONED','Report confirmé par support : '+note,'SUPPORT');}audit(companyId,user.id,'CONTACT_ATTEMPT','shipment',s.id,{outcome,next,note});});return send(ctx.res,201,{ok:true});
  }
+ if(/^\/api\/workflow\/(stock-intakes|catalog|stock-counts|stock-movements|quarantine|picking)(\/|$)/.test(path))return warehouseRoute(ctx);
  if(path.startsWith('/api/workflow/pickup')||path.startsWith('/api/workflow/vehicles'))return pickupRoute(ctx);
  if(path.startsWith('/api/workflow/returns'))return returnRoute(ctx);
  if(path.startsWith('/api/workflow/claims'))return claimRoute(ctx);

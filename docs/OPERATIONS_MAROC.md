@@ -28,7 +28,8 @@ Les onze rôles et leurs périmètres sont détaillés dans le README ; les perm
 | Ticket et bon livraison/stock | Identité et préparation demandée ; pas une collecte |
 | Demande/bon ramassage | Point, rendez-vous et liste annoncée |
 | Scan marchand | Collecte effective, COLLECTED |
-| Scan warehouse | Réception et sortie FIFO pour STOCK, PICKED_UP |
+| Contrôle produits STOCK | SKU/code-barres, produit et quantité conformes avant sortie |
+| Scan warehouse | Réception colis et sortie FIFO une fois le contrôle STOCK complet, PICKED_UP |
 | Container/bon envoi + scans | Liste attendue et contenu contrôlé d’une ville |
 | Fermeture, Excel et départ | Trois actions distinctes ; téléchargement sans départ fictif |
 | Réception agence | Colis réellement arrivés et différence attendu/reçu |
@@ -95,3 +96,15 @@ Un rapprochement exact confirme le brut une seule fois. Une différence bloque l
 Les tests API/domaine/migration contrôlent les permissions, la propriété des produits, la collecte, les scans, les retours, les pièces et la finance. Les parcours Chromium de CI traversent les formulaires jusqu’aux écritures SQLite, avec captures desktop/mobile et onze rôles.
 
 Les banques/partenaires réels, la charge et les appareils physiques restent à valider. [Travaux restants](ROADMAP.md) : approvisionnement SKU, multi-hubs/multi-cartons, tournées optimisées, fiscalité, preuves signées, sécurité renforcée et exploitation supervisée.
+
+
+## Contrôles warehouse ajoutés en v0.8
+
+Ces règles sont des choix du produit, à adapter aux pratiques et contrats de la société :
+
+- Approvisionnement marchand annoncé par SKU et cartons ; dépôt ou collecte avec ramasseur et véhicule. Aucun stock disponible avant réception réelle.
+- Réceptions successives par bon, conformes séparés des endommagés, surplus motivés, clôture avec écarts et documents nominatifs/références de preuve.
+- Contrôle SKU/code-barres et quantités de chaque commande stock avant le scan du colis ; départ et retour conservent les mouvements de leurs lots.
+- Inventaire de lots d’un marchand/emplacement, soumis au responsable ; régularisation atomique rejetée si les lots/réservations ont changé ou si le comptage ne couvre pas les réservations.
+- Quarantaine d’approvisionnement isolée du disponible ; décision responsable motivée pour levée, remise ou écart physique. Les dommages des retours colis restent dans leur dossier de retour.
+- Journal de stock conservé, signé par acteur et source ; les anciens stocks ont un solde d’ouverture à la migration et non un historique inventé.

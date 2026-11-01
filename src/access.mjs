@@ -2,16 +2,16 @@ export const ROLE_LABELS={ADMIN:'Direction / administrateur',OPERATIONS:'Respons
 export const ROLES=Object.keys(ROLE_LABELS);
 export const PERMISSIONS={
  ADMIN:['*'],
- OPERATIONS:['shipments','shipments.read','shipments.create','agencies','directory','imports','export','users.read','inventory.read','inventory.write','warehouse','dispatch','pickups.manage','routes.manage','agency.receive','returns.manage','returns.receive','claims.manage','reports','cash.read'],
- DISPATCHER:['shipments.read','agencies','directory','users.read','pickups.manage','routes.manage','dispatch','reports','claims.create'],
- WAREHOUSE:['shipments.read','agencies','directory','inventory.read','inventory.write','warehouse','dispatch','returns.receive','reports','claims.create'],
- PICKUP_DRIVER:['pickups.self','vehicles.self','claims.create'],
+ OPERATIONS:['shipments','shipments.read','shipments.create','agencies','directory','imports','export','users.read','inventory.read','inventory.write','inventory.approve','intakes.manage','intakes.receive','warehouse','dispatch','pickups.manage','routes.manage','agency.receive','returns.manage','returns.receive','claims.manage','reports','cash.read'],
+ DISPATCHER:['shipments.read','agencies','directory','users.read','pickups.manage','intakes.manage','routes.manage','dispatch','reports','claims.create'],
+ WAREHOUSE:['shipments.read','agencies','directory','inventory.read','inventory.write','warehouse','dispatch','intakes.create','intakes.receive','returns.receive','reports','claims.create'],
+ PICKUP_DRIVER:['intakes.self','pickups.self','vehicles.self','claims.create'],
  AGENCY_MANAGER:['shipments.read','agencies','directory','users.read','dispatch','agency.receive','routes.manage','returns.manage','claims.read','claims.reply','reports','cash.self'],
  AGENCY_AGENT:['shipments.read','agencies','agency.receive','dispatch.read','claims.read','claims.reply'],
  DRIVER:['driver','routes.self','cash.self','claims.create'],
- SUPPORT:['shipments.read','agencies','directory','pickups.read','claims.manage','returns.manage','reports'],
+ SUPPORT:['shipments.read','agencies','directory','pickups.read','intakes.read','claims.manage','returns.manage','reports'],
  FINANCE:['shipments.read','finance','directory','reports','cash.manage','claims.read','returns.read'],
- MERCHANT:['merchant','shipments.create','pickups.create','claims.create','returns.create']
+ MERCHANT:['merchant','catalog.create','intakes.create','shipments.create','pickups.create','claims.create','returns.create']
 };
 export const has=(user,permission)=>PERMISSIONS[user.role]?.includes('*')||PERMISSIONS[user.role]?.includes(permission);
 export const denied=(status,message)=>Object.assign(new Error(message),{status});

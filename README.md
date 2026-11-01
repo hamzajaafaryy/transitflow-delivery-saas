@@ -1,10 +1,12 @@
 # TransitFlow — exploitation d’une société de livraison au Maroc
 
-Version 0.7 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
+Version 0.8 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
 
 ## Périmètre livré
 
-- Commandes externes et commandes stock marchand, réservation FIFO atomique, bons de préparation et tickets privés Code128/QR.
+- Commandes externes et commandes stock marchand, réservation FIFO atomique, contrôle SKU/code-barres et quantités avant sortie, bons de préparation et tickets privés Code128/QR.
+- Catalogue par marchand, bons de réapprovisionnement par dépôt ou collecte, ramasseur/véhicule, réceptions partielles, cartons, unités conformes/endommagées, écarts et justificatifs.
+- Quarantaine séparée du disponible, traitement approuvé avec preuve, inventaires physiques soumis puis validés, mouvements de stock conservés et soldes de migration identifiés.
 - Demandes de ramassage par boutique/fournisseur, point et rendez-vous ; ramasseur et véhicule personnel ou société ; collecte au scan, manquants et réception warehouse distincte.
 - Containers par ville : attendus/scannés/manquants, contrôle destination/doublons, fermeture, Excel du lot et départ physique.
 - Réception agence, périmètre propre à chaque agence, tournées, tentatives, reports datés, refus, injoignable, perte/dommage et colis retrouvé.
@@ -15,6 +17,17 @@ Version 0.7 : une société, ses clients marchands, son warehouse et son réseau
 
 Le [cadrage métier et les sources marocaines](docs/OPERATIONS_MAROC.md) distingue les pratiques publiées et les choix propres à TransitFlow. Voir aussi l’[API](docs/API.md).
 
+
+## Warehouse & stock v0.8
+
+1. **Catalogue produits** : le marchand déclare ses SKU, codes-barres et seuils d’alerte. Deux marchands peuvent utiliser le même SKU sans partager leur stock.
+2. **Entrées de stock** : créer un bon avec cartons et quantités annoncés. En collecte, affecter ramasseur et véhicule puis confirmer les cartons chez le marchand. Cette étape ne crée pas encore de stock warehouse.
+3. **Réception** : saisir les cartons réellement arrivés, le réceptionnaire, la preuve et les quantités conformes ou endommagées par SKU. Plusieurs réceptions sont possibles. Les conformes deviennent des lots FIFO ; les dommages vont en quarantaine. Clôturer le bon avec un motif pour tout manque, surplus, dommage ou écart de cartons.
+4. **Préparation stock** : ouvrir « Contrôler produits » depuis Réception & préparation, scanner chaque SKU/code-barres et sa quantité, puis scanner le tracking du colis. Un produit absent, une quantité supplémentaire ou un bon incomplet bloque la sortie.
+5. **Inventaires** : le magasinier compte les lots d’un marchand/emplacement puis soumet. Direction/exploitation valide les écarts avec motif. Si stock, réservations ou lots ont changé entre-temps, recommencer ; les réservations ne peuvent pas devenir supérieures au physique.
+6. **Quarantaine & mouvements** : direction/exploitation peut lever la quarantaine, remettre au marchand ou écarter physiquement des unités avec motif et preuve. Le journal conserve les variations conformes/réservées/quarantaine et l’auteur. Les anciens lots reçoivent un solde de migration, sans reconstituer un passé absent.
+
+Les preuves sont des noms et références déclarées. La réception directe historique reste accessible pour les reprises de stock simples ; les réceptions avec bon suivent le parcours ci-dessus. Les produits endommagés des retours colis gardent leur dossier retour et ne sont pas dupliqués dans la quarantaine d’approvisionnement. Les pages marchands et les documents restent limités à leur magasin.
 
 ## Espace de travail v0.7
 
@@ -44,7 +57,7 @@ Le serveur filtre aussi les documents et pièces jointes. Ramasseur et livreur s
 
 1. Le marchand crée EXTERNAL ou STOCK. Les produits appartiennent à son magasin et sont réservés en FIFO ; une rupture annule toute la transaction.
 2. Le dispatcher affecte ramasseur et véhicule à une demande. Le scan chez le marchand donne COLLECTED. Les absents sont motivés et libérés pour une nouvelle demande.
-3. Le magasinier imprime bon et ticket, prépare puis scanne : PICKED_UP. Pour STOCK, les réservations sortent physiquement une seule fois. Un dépôt direct reste possible hors demande active.
+3. Le magasinier imprime bon et ticket, contrôle chaque SKU/code-barres et sa quantité pour STOCK, puis scanne le tracking : PICKED_UP. Les réservations sortent physiquement une seule fois. Un dépôt direct reste possible hors demande active.
 4. Chaque colis attendu est scanné dans le container de sa ville avant fermeture. Excel et départ sont séparés. Le départ donne IN_TRANSIT.
 5. L’agence réceptionne au scan (AT_AGENCY), prépare une tournée et confirme le départ (OUT_FOR_DELIVERY). Chaque arrêt a un résultat avant clôture.
 6. Livrer exige réceptionnaire et COD exact. Un report exige une date future, un échec un motif. Déroger à un report/limite d’essais exige un motif responsable audité.
@@ -97,7 +110,7 @@ Recharger ensuite l’application. Modifier le fichier .env ou un export dans un
 npm run check
 ```
 
-La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, warehouse, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
+La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, scan produits, collecte de réapprovisionnement, réception avec écarts, inventaire validé, quarantaine, journal stock, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
 
 ## Architecture et migration
 

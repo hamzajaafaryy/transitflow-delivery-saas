@@ -1,8 +1,8 @@
-# Périmètre livré et travaux restants — v0.6
+# Périmètre livré et travaux restants — v0.8
 
 ## Disponible
 
-Société unique ; onze rôles ; agences par ville ; commandes externes/stock FIFO ; tickets et bons ; collecte avec ramasseur/véhicule personnel ; réception warehouse ; containers/Excel/départ ; arrivée agence ; tournées/tentatives ; motifs/report/dérogation ; perte/dommage/colis retrouvé ; retours/inspection/restock/remise marchand/nouvel envoi/échange ; réclamations/pièces privées ; notifications ; COD déclaré/remis/rapproché ; frais agence retenus ; tarifs/relevés/ajustements/dettes ; sessions révocables et audit.
+Société unique ; onze rôles ; agences par ville ; commandes externes/stock FIFO ; tickets et bons ; collecte avec ramasseur/véhicule personnel ; réception warehouse ; containers/Excel/départ ; arrivée agence ; tournées/tentatives ; motifs/report/dérogation ; perte/dommage/colis retrouvé ; retours/inspection/restock/remise marchand/nouvel envoi/échange ; réclamations/pièces privées ; notifications ; COD déclaré/remis/rapproché ; frais agence retenus ; tarifs/relevés/ajustements/dettes ; sessions révocables et audit ; catalogue marchand ; collecte de réapprovisionnement SKU ; réceptions multi-cartons/partielles avec écarts ; scan des produits par SKU/code-barres ; quarantaine d’approvisionnement et preuves de traitement ; comptages de lots avec validation responsable ; journal immuable des mouvements et soldes de migration.
 
 Le [cadrage métier](OPERATIONS_MAROC.md) décrit les cas et sources. Les tests API et parcours Chromium de la CI sont reproductibles.
 
@@ -15,8 +15,8 @@ Le [cadrage métier](OPERATIONS_MAROC.md) décrit les cas et sources. Les tests 
 
 ## Cas physiques avancés
 
-- Collecte de réapprovisionnement SKU avant entrée warehouse ; actuellement entrées enregistrées par le magasinier.
-- Picking groupé, scan EAN, inventaire tournant et écarts d’inventaire.
+- Picking groupé par vague, emplacement/lot scanné, dates d’expiration, planification des inventaires tournants et suivi des écarts récurrents ; actuellement contrôle produit/quantité et comptage explicite par marchand/emplacement.
+- Unification de la quarantaine d’approvisionnement avec les produits endommagés en retour ; actuellement deux dossiers séparés, sans double remise en stock.
 - Plusieurs cartons/commande, livraison partielle, échange simultané au pas de porte ; actuellement colis livré entier et remplacement après contrôle du retour.
 - Transferts multi-hubs, transporteurs intermédiaires et circuit de collecte multi-boutiques optimisé ; actuellement une mission par point.
 - Optimisation/GPS, mode hors ligne, caméra ; actuellement ordre d’arrêts et douchette clavier.

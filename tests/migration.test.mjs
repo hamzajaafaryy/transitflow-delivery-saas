@@ -14,6 +14,7 @@ test('v0.4 upgrade preserves merchant stock/statements/events and splits a carri
   const old=new DatabaseSync(file);old.exec(schema);
   old.prepare('INSERT INTO companies VALUES(?,?,?,?,?)').run('co','atlas','Atlas','STARTER','2026-10-30T10:00:00Z');
   old.prepare('INSERT INTO merchants VALUES(?,?,?,?,?)').run('merchant','co','Boutique','0600000000','2026-10-30T10:00:00Z');
+  old.prepare('INSERT INTO merchants VALUES(?,?,?,?,?)').run('merchant2','co','Autre boutique','0600000001','2026-10-30T10:00:00Z');
   old.prepare('INSERT INTO users VALUES(?,?,?,?,?,?,?,?,?)').run('user','co','Admin','admin@atlas.ma',hashPassword('strong-password-123'),'ADMIN',null,1,'2026-10-30T10:00:00Z');
   old.prepare('INSERT INTO partners VALUES(?,?,?,?,?,?,?,?,?)').run('partner','co','Transport Nord','["Tanger","Tétouan"]','contact',2000,'legacy-key','{}','2026-10-30T10:00:00Z');
   old.prepare(`INSERT INTO shipments(id,tenant_id,tracking,merchant_id,partner_id,recipient,phone,city,address,cod_centimes,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('ship','co','TF-LEGACY','merchant','partner','Client','0611111111','Tétouan','Rue 1',20000,'PICKED_UP','2026-10-30T10:00:00Z','2026-10-30T11:00:00Z');
@@ -31,10 +32,13 @@ test('v0.4 upgrade preserves merchant stock/statements/events and splits a carri
   assert.equal(db.prepare('SELECT quantity_on_hand,quantity_reserved FROM stock_lots').get().quantity_on_hand,20);
   assert.equal(db.prepare('SELECT quantity_reserved FROM stock_lots').get().quantity_reserved,2);
   assert.equal(db.prepare('SELECT merchant_id FROM inventory_products').get().merchant_id,'merchant');
+  const opening=db.prepare('SELECT * FROM stock_movements').get();assert.equal(opening.kind,'OPENING');assert.equal(opening.product_id,'product');assert.equal(opening.lot_id,'lot');assert.equal(opening.physical_delta,20);assert.equal(opening.reserved_delta,2);assert.match(opening.note,/non reconstitué/);
+  assert.equal(db.prepare('SELECT shipment_id FROM stock_allocations WHERE product_id=?').get('product').shipment_id,'ship');
+  db.prepare('INSERT INTO inventory_products(id,company_id,sku,name,merchant_id,created_at) VALUES(?,?,?,?,?,?)').run('product2','co','SKU-01','Même SKU autre marchand','merchant2','2026-11-01T10:00:00Z');
   assert.equal(db.prepare('SELECT fee_centimes FROM merchant_rate_cards').get().fee_centimes,3000);
   const event=db.prepare('SELECT status,source FROM shipment_events').get();assert.equal(event.status,'ASSIGNED_AGENCY');assert.equal(event.source,'AGENCY:'+shipment.agency_id);
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
-  db.close();db=openDb(file);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agencies').get().n,2);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipments').get().n,1);db.close();
+  db.close();db=openDb(file);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM agencies').get().n,2);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM shipments').get().n,1);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM stock_movements').get().n,1,'reopen must not duplicate opening balances');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);db.close();
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 

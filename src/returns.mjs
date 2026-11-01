@@ -1,3 +1,4 @@
+import {stockMovement} from './stock-ledger.mjs';
 import {id,now} from './db.mjs';
 import {has,requirePermission,agencyScoped,requireAgency} from './access.mjs';
 import {clean,fail,reference,shipment,returnAccess,scanShipment,parcelEvent,notify,documentHtml,html,esc,integer} from './workflow-shared.mjs';
@@ -56,7 +57,7 @@ export async function returnRoute(ctx){
   tx(()=>{
    if(s.order_source==='STOCK'&&['RESTOCK','RESHIP'].includes(disposition)){
     const lines=all('SELECT * FROM return_items WHERE return_id=? AND company_id=?',returnId,companyId);
-    for(const line of lines){if(line.restocked_lot_id)throw fail(409,'Produit déjà remis en stock');const p=stmt('SELECT merchant_id FROM inventory_products WHERE id=? AND company_id=?',line.product_id,companyId);if(!p||p.merchant_id!==s.merchant_id)throw fail(409,'Propriété du produit modifiée ; contrôle manuel requis');const lotId=id();run('INSERT INTO stock_lots(id,company_id,product_id,received_at,quantity_on_hand,location) VALUES(?,?,?,?,?,?)',lotId,companyId,line.product_id,now(),line.quantity,location);run('UPDATE return_items SET restocked_lot_id=? WHERE id=? AND company_id=?',lotId,line.id,companyId);}
+    for(const line of lines){if(line.restocked_lot_id)throw fail(409,'Produit déjà remis en stock');const p=stmt('SELECT merchant_id FROM inventory_products WHERE id=? AND company_id=?',line.product_id,companyId);if(!p||p.merchant_id!==s.merchant_id)throw fail(409,'Propriété du produit modifiée ; contrôle manuel requis');const lotId=id();run('INSERT INTO stock_lots(id,company_id,product_id,received_at,quantity_on_hand,location) VALUES(?,?,?,?,?,?)',lotId,companyId,line.product_id,now(),line.quantity,location);run('UPDATE return_items SET restocked_lot_id=? WHERE id=? AND company_id=?',lotId,line.id,companyId);stockMovement(ctx,{productId:line.product_id,lotId,kind:'RETURN',physical:line.quantity,entityType:'return',entityId:returnId,eventKey:'RETURN:'+line.id});}
    }
    run("UPDATE parcel_returns SET state='INSPECTED',disposition=?,inspection_note=?,updated_at=? WHERE id=? AND company_id=?",disposition,note,now(),returnId,companyId);audit(companyId,user.id,'RETURN_INSPECTED','return',returnId,{disposition,note});notify(ctx,{merchant:r.merchant_id},'Retour contrôlé : '+disposition,'return',returnId);
   });

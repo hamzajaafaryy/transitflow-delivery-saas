@@ -1,3 +1,5 @@
+import {stockMovement} from './stock-ledger.mjs';
+import {pickingDetail} from './warehouse.mjs';
 import { randomBytes } from 'node:crypto';
 import { id,now } from './db.mjs';
 import {has,requirePermission,requireAgency,agencyScoped} from './access.mjs';
@@ -12,7 +14,8 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 const operations=user=>requirePermission(user,'warehouse','dispatch','dispatch.read','agencies');
 const admin=user=>{if(user.role!=='ADMIN')throw bad(403,'Admin requis');};
 
-export function reserveItems({stmt,all,run,companyId},shipment,items){
+export function reserveItems(ctx,shipment,items){
+ const {stmt,all,run,companyId}=ctx;
  if(!Array.isArray(items)||!items.length||items.length>20)throw bad(400,'Une commande stock nécessite de 1 à 20 produits');
  const normalized=items.map(x=>({productId:clean(x?.productId,40),quantity:Number(x?.quantity)}));
  if(normalized.some(x=>!x.productId||!Number.isSafeInteger(x.quantity)||x.quantity<1||x.quantity>100000)||new Set(normalized.map(x=>x.productId)).size!==normalized.length)throw bad(400,'Produits ou quantités invalides');
@@ -24,7 +27,7 @@ export function reserveItems({stmt,all,run,companyId},shipment,items){
   let remaining=item.quantity;
   for(const lot of lots){if(!remaining)break;const quantity=Math.min(remaining,lot.quantity_on_hand-lot.quantity_reserved);
    run('UPDATE stock_lots SET quantity_reserved=quantity_reserved+? WHERE id=? AND company_id=?',quantity,lot.id,companyId);
-   run('INSERT INTO stock_allocations VALUES(?,?,?,?,?,?,?,?)',id(),companyId,shipment.id,product.id,lot.id,quantity,'RESERVED',now());remaining-=quantity;
+   const allocationId=id();run('INSERT INTO stock_allocations VALUES(?,?,?,?,?,?,?,?)',allocationId,companyId,shipment.id,product.id,lot.id,quantity,'RESERVED',now());stockMovement(ctx,{productId:product.id,lotId:lot.id,kind:'RESERVE',reserved:quantity,entityType:'shipment',entityId:shipment.id,eventKey:'RESERVE:'+allocationId});remaining-=quantity;
   }
  }
  return normalized;
@@ -116,8 +119,9 @@ export async function logisticsRoute(ctx){
    if(stmt("SELECT 1 FROM pickup_items WHERE shipment_id=? AND company_id=? AND active=1 AND state='EXPECTED'",s.id,companyId))throw bad(409,'Ce colis est encore attendu chez le marchand ; le ramasseur doit confirmer sa collecte');
    const allocations=all("SELECT * FROM stock_allocations WHERE company_id=? AND shipment_id=? AND state='RESERVED'",companyId,s.id);
    if(s.order_source==='STOCK'&&!allocations.length)throw bad(409,'Bon stock incomplet : aucun produit réservé');
+   if(s.order_source==='STOCK'&&!pickingDetail(ctx,s.id).complete)throw bad(409,'Contrôlez chaque produit et sa quantité avant le scan du colis');
    if(s.order_source==='EXTERNAL'&&allocations.length)throw bad(409,'Source du colis incohérente avec le stock');
-   for(const a of allocations){run('UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-?,quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.quantity,a.lot_id,companyId);run("UPDATE stock_allocations SET state='DISPATCHED' WHERE id=? AND company_id=?",a.id,companyId);}
+   for(const a of allocations){run('UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-?,quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.quantity,a.lot_id,companyId);run("UPDATE stock_allocations SET state='DISPATCHED' WHERE id=? AND company_id=?",a.id,companyId);stockMovement(ctx,{productId:a.product_id,lotId:a.lot_id,kind:'DISPATCH',physical:-a.quantity,reserved:-a.quantity,entityType:'shipment',entityId:s.id,eventKey:'DISPATCH:'+a.id});}
    run('UPDATE shipments SET ramassed_at=? WHERE id=? AND company_id=?',now(),s.id,companyId);event(ctx,s,'PICKED_UP','Scan ramassage — '+(s.order_source==='STOCK'?'préparation stock confirmée':'colis externe réceptionné'));
    pickupReceived(ctx,s);
    audit(companyId,user.id,'RAMASSAGE_SCANNED','shipment',s.id,{source:s.order_source,stockAllocations:allocations.length});

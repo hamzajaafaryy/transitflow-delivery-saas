@@ -1,3 +1,4 @@
+import {activeVehicleMission} from './stock-ledger.mjs';
 import {id,now} from './db.mjs';
 import {requirePermission,has,agencyScoped} from './access.mjs';
 import {clean,fail,reference,isoDate,merchantId,pickupAccess,scanShipment,parcelEvent,notify,documentHtml,html,esc} from './workflow-shared.mjs';
@@ -53,7 +54,7 @@ export async function pickupRoute(ctx){
   if(p.state==='FAILED')throw fail(409,'Créez une nouvelle demande pour les colis non collectés');
   tx(()=>{run("UPDATE pickups SET driver_id=?,vehicle_id=?,state='ASSIGNED',updated_at=? WHERE id=? AND company_id=?",driver.id,vehicle.id,now(),pickupId,companyId);audit(companyId,user.id,'PICKUP_ASSIGNED','pickup',pickupId,{driverId:driver.id,vehicleId:vehicle.id});notify(ctx,{users:[driver.id]},'Ramassage affecté : '+p.reference,'pickup',pickupId);notify(ctx,{merchant:p.merchant_id},'Ramasseur affecté à votre demande','pickup',pickupId);});
  }else if(action==='start'){
-  if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='ASSIGNED')throw fail(409,'Ramassage non affecté');if(stmt("SELECT 1 FROM pickups WHERE company_id=? AND id<>? AND state='IN_PROGRESS' AND (driver_id=? OR vehicle_id=?)",companyId,p.id,p.driver_id,p.vehicle_id)||stmt("SELECT 1 FROM delivery_routes WHERE company_id=? AND state='ACTIVE' AND (driver_id=? OR vehicle_id=?)",companyId,p.driver_id,p.vehicle_id))throw fail(409,'Conducteur ou véhicule déjà en mission');tx(()=>{run("UPDATE pickups SET state='IN_PROGRESS',updated_at=? WHERE id=? AND company_id=?",now(),pickupId,companyId);audit(companyId,user.id,'PICKUP_STARTED','pickup',pickupId);});
+  if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='ASSIGNED')throw fail(409,'Ramassage non affecté');if(activeVehicleMission(ctx,p.driver_id,p.vehicle_id))throw fail(409,'Conducteur ou véhicule déjà en mission');tx(()=>{run("UPDATE pickups SET state='IN_PROGRESS',updated_at=? WHERE id=? AND company_id=?",now(),pickupId,companyId);audit(companyId,user.id,'PICKUP_STARTED','pickup',pickupId);});
  }else if(action==='scan'){
   if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='IN_PROGRESS')throw fail(409,'Démarrez le ramassage avant le scan');
   tx(()=>{const s=scanShipment(ctx,data.scan),item=stmt('SELECT * FROM pickup_items WHERE pickup_id=? AND shipment_id=? AND company_id=?',pickupId,s.id,companyId);if(!item||s.merchant_id!==p.merchant_id)throw fail(409,'Colis absent du bon de ce marchand');if(item.state!=='EXPECTED'||s.status!=='CREATED')throw fail(409,'Colis déjà collecté ou non disponible');

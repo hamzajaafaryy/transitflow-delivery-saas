@@ -1,8 +1,10 @@
 import {icon as uiIcon,operationsDashboard,emptyState} from './ui.js';
 import {workflowForm} from './workflow-forms.js';
-let c;export const configureWorkflows=ctx=>{c=ctx;};
+import {configureWarehouse,warehouseTabs,warehouseNames,warehousePage,warehouseAction} from './warehouse.js';
+let c;export const configureWorkflows=ctx=>{c=ctx;configureWarehouse(ctx);};
 const labels={REQUESTED:'Demandé',ASSIGNED:'Affecté',IN_PROGRESS:'En cours',PARTIAL:'Partiel',COLLECTED:'Collecté chez le client',RECEIVED:'Réceptionné',FAILED:'Non effectué',CANCELLED:'Annulé',EXPECTED:'Attendu',MISSING:'Manquant',AUTHORIZED:'Autorisé',IN_TRANSIT:'En transport',INSPECTED:'Contrôlé',COMPLETED:'Terminé',REJECTED:'Refusé',RETURN:'Retour',EXCHANGE:'Échange',OPEN:'Nouveau',WAITING_MERCHANT:'Attente client',WAITING_AGENCY:'Attente agence',RESOLVED:'Résolu',CLOSED:'Clôturé',DRAFT:'Préparée',ACTIVE:'En tournée',PENDING:'À traiter',ATTEMPTED:'Tentative enregistrée',DECLARED:'Déclaré',SUBMITTED:'Remise à vérifier',DISPUTED:'Écart à résoudre',RECONCILED:'Rapproché',RESTOCK:'Remise en stock',RETURN_MERCHANT:'Remise au marchand',RESHIP:'Réexpédition',DISCARD:'Écarté du stock',SEALED:'Scellé',GOOD:'Conforme',DAMAGED:'Endommagé',INCOMPLETE:'Incomplet',DELAY:'Retard',DELIVERY:'Livraison',STOCK:'Stock',PAYMENT:'Paiement',LOST:'Perte',TECHNICAL:'Technique',OTHER:'Autre',NORMAL:'Normale',HIGH:'Haute',URGENT:'Urgente',REFUND:'Remboursement',COMPENSATION:'Indemnisation',FEE_CORRECTION:'Correction de frais'};
 const names={pickups:'Demandes de ramassage',returns:'Retours & échanges',claims:'Réclamations',arrivals:'Réception agence',routes:'Tournées de livraison',cash:'Caisse & remises',vehicles:'Véhicules',adjustments:'Ajustements marchands',notifications:'Notifications',settings:'Paramètres',audit:'Journal des opérations'};
+Object.assign(names,warehouseNames);
 const has=p=>c.state.me.permissions.includes('*')||c.state.me.permissions.includes(p);
 const esc=x=>c.esc(x),date=x=>c.date(x),money=x=>c.money(x),label=x=>labels[x]||c.state.me.statusLabels[x]||x;
 const badge=x=>`<span class="pill ${['COMPLETED','RECEIVED','RESOLVED','RECONCILED','DELIVERED'].includes(x)?'DELIVERED':['DISPUTED','MISSING','FAILED','REJECTED','DAMAGED'].includes(x)?'REFUSED':'POSTPONED'}">${esc(label(x))}</span>`;
@@ -21,12 +23,12 @@ export function workflowTabs(){
  if(['claims.create','claims.manage','claims.read'].some(has))tabs.push('claims');
  if(has('agency.receive'))tabs.push('arrivals');if(has('routes.manage')||has('routes.self'))tabs.push('routes');
  if(['cash.self','cash.read','cash.manage','finance'].some(has))tabs.push('cash');if(has('pickups.manage')||has('routes.manage')||has('vehicles.self'))tabs.push('vehicles');
- if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push('notifications');if(has('*'))tabs.push('settings','audit');return tabs;
+ if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push(...warehouseTabs(),'notifications');if(has('*'))tabs.push('settings','audit');return tabs;
 }
 export const workflowNames=names;
 export async function loadWorkflows(isCurrent=()=>true){
  if(!c.state.me)return;const tab=c.state.tab,detail=c.state.workflowDetail,boot=await call('/bootstrap');if(!isCurrent())return;c.state.workflowBoot=boot;
- let data=null;if(tab==='dashboard')data=await call('/overview');else if(workflowTabs().includes(tab)){if(detail&&detail.kind===tab)data=await call('/'+tab+'/'+detail.id);else if(tab==='settings')data=boot.settings;else data=await call('/'+tab);}
+ let data=null;if(tab==='dashboard')data=await call('/overview');else if(workflowTabs().includes(tab)){if(detail&&detail.kind===tab)data=await call('/'+tab+'/'+detail.id);else if(tab==='settings')data=boot.settings;else data=await call('/'+tab+(tab==='stock-movements'?'?offset='+(c.state.movementOffset||0):''));}
  if(!isCurrent())return;c.state.workflowData=data;if(tab==='dashboard')c.state.dashboardSummary=data;
 }
 export function workflowDashboard(){return operationsDashboard(c);}
@@ -43,6 +45,7 @@ function listControls(kind,original,filtered){
 }
 function scanForm(action,id,caption){return `<form class="workflow-scan" data-workflow-scan="${action}" data-id="${esc(id)}"><label for="workflow-scan-input">${caption}</label><div class="scan-row"><input id="workflow-scan-input" name="scan" required autocomplete="off" placeholder="Scanner le tracking / ID puis Entrée"><button class="btn" type="submit">Valider le scan</button></div></form>`;}
 export function workflowPage(){
+ if(warehouseTabs().includes(c.state.tab))return warehousePage();
  const kind=c.state.tab,original=c.state.workflowData||{},key=listKeys[kind],filter=c.state.workflowFilters[kind]||{};
  if(c.state.workflowDetail?.kind===kind)return `<div class="workflow-detail">${detailProgress(kind,original)}${detailPage(kind,original)}</div>`;
  const records=key?(original[key]||[]):[],filtered=records.filter(row=>(!filter.state||row.state===filter.state)&&(!filter.query||folded(JSON.stringify(row)+' '+label(row.state||'')).includes(folded(filter.query)))),page=Number(filter.page)||0;
@@ -110,6 +113,7 @@ function detailPage(kind,x){
  return empty();
 }
 export async function workflowAction(action,el){
+ if(await warehouseAction(action,el))return true;
  if(!action.startsWith('wf-'))return false;const key=action.slice(3),kind=el.dataset.kind,id=el.dataset.id;
  if(key==='refresh'){await c.refresh();return true;}
  if(key==='list-prev'||key==='list-next'){const filter=c.state.workflowFilters[c.state.tab]||{};filter.page=Math.max(0,(filter.page||0)+(key==='list-next'?1:-1));c.state.workflowFilters[c.state.tab]=filter;c.render();return true;}
@@ -118,7 +122,7 @@ export async function workflowAction(action,el){
  if(key==='transition'){const [section,verb]=kind.split('/');await call('/'+section+'/'+id+'/'+verb,{});await c.refresh();return true;}
  if(key==='print'){window.open('/api/workflow/'+kind+'/'+id+'/print','_blank','noopener');return true;}
  if(key==='read-all'){await call('/notifications/read',{});await c.refresh();return true;}
- if(key==='notification'){const map={pickup:'pickups',return:'returns',claim:'claims',route:'routes',cash:'cash',adjustment:'adjustments'},tab=map[kind]||'shipments',detail=['pickup','return','claim','route'].includes(kind)?{kind:tab,id}:null;await call('/notifications/read',{id:el.dataset.notificationId});if(tab==='shipments'){c.state.search=id;c.state.status='';c.state.shipCity='';c.state.shipSource='';c.state.shipMerchant='';c.state.shipPage=0;}await c.navigate(tab,{detail});return true;}
+ if(key==='notification'){const map={pickup:'pickups',return:'returns',claim:'claims',route:'routes',cash:'cash',adjustment:'adjustments',stock_intake:'stock-intakes',stock_count:'stock-counts',quarantine:'quarantine'},tab=map[kind]||'shipments',detail=['pickup','return','claim','route','stock_intake','stock_count','quarantine'].includes(kind)?{kind:tab,id}:null;await call('/notifications/read',{id:el.dataset.notificationId});if(tab==='shipments'){c.state.search=id;c.state.status='';c.state.shipCity='';c.state.shipSource='';c.state.shipMerchant='';c.state.shipPage=0;}await c.navigate(tab,{detail});return true;}
  await workflowForm({c,call,has,label,table,esc},key,kind,id);return true;
 }
 export function wireWorkflows(){

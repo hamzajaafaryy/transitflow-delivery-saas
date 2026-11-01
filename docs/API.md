@@ -1,4 +1,4 @@
-# TransitFlow API — société unique, agences et envois (v0.7)
+# TransitFlow API — société unique, agences et envois (v0.8)
 
 Les routes sont préfixées `/api`. Les requêtes navigateur utilisent le cookie HttpOnly `dn_session`. Toute mutation navigateur requiert `X-Requested-With: delivery-ui` et, si présent, un `Origin` identique à `PUBLIC_BASE_URL`. La synchronisation agence utilise un Bearer distinct. JSON sauf import binaire, export XLSX et documents HTML.
 
@@ -204,3 +204,40 @@ REFUND est négatif ; avec returnId il exige un retour reçu après livraison. C
 `GET /shipments` accepte `q` (tracking, nom, téléphone, ID exact ou nom marchand), `city`, `status`, `source=EXTERNAL|STOCK`, `merchantId`, `sort=newest|oldest|cod_desc`, `limit` et `offset`. Les critères s’ajoutent au périmètre de la session ; ils ne le remplacent jamais. Le total filtré est renvoyé avant pagination. Le CSV de l’interface exporte uniquement les lignes visibles sélectionnées, avec protection des cellules interprétables comme formules.
 
 `GET /workflow/overview` ajoute `cityDistribution`, `recentShipments`, `recentActivity` et, pour les rôles autorisés, `cashHeldCentimes` filtré sur leur caisse. Les derniers colis et mouvements sont filtrés par la même portée marchand/agence/conducteur que la liste colis. Aucun chiffre de démonstration ni tendance artificielle n’est utilisé dans le tableau de bord.
+
+
+## Approvisionnement, picking et inventaire v0.8
+
+Préfixe `/api/workflow`. Les mutations utilisent la session et les en-têtes anti-CSRF habituels. ADMIN dispose de tous les droits. Le marchand ne voit que son magasin ; le ramasseur ne voit que les collectes stock qui lui sont affectées.
+
+| Route | Données / résultat | Accès mutation |
+| --- | --- | --- |
+| `GET/POST /catalog` | Produits. Création : `sku`, `name`, `merchantId` si staff, `barcode` facultatif, `lowStockThreshold` | Marchand propre / magasinier / exploitation |
+| `GET/POST /stock-intakes` | Création : `merchantId` si staff, `mode: DROP_OFF/COLLECTION`, `expectedBoxes`, `items:[{productId,quantity}]`, `note`. Collecte : `pointId`, `scheduledAt` ISO requis | Marchand propre / warehouse / exploitation / dispatcher |
+| `GET /stock-intakes/:id` | Bon, lignes attendues/conformes/endommagées/écart, réceptions et totaux cartons/unités | Lecture périmètre |
+| `POST /stock-intakes/:id/assign` | `driverId`, `vehicleId` ; ramasseur actif et véhicule compatible | Dispatcher / exploitation |
+| `POST /stock-intakes/:id/start` | `{}` ; une seule mission active par conducteur/véhicule entre ramassage, collecte stock et tournée | Ramasseur affecté / exploitation |
+| `POST /stock-intakes/:id/collect` | `boxes`, `senderName`, `proofReference`, `note` si écart | Ramasseur affecté / exploitation |
+| `POST /stock-intakes/:id/receive` | `requestId`, `boxes`, `receiverName`, `proofReference`, `note`, `items:[{lineId,acceptedQuantity,damagedQuantity,location}]` | Magasinier / exploitation |
+| `POST /stock-intakes/:id/close` | `note` détaillée obligatoire si écarts/dommages ; état RECEIVED | Magasinier / exploitation |
+| `POST /stock-intakes/:id/cancel` | `note`, avant collecte | Marchand propre / exploitation / dispatcher |
+| `POST /stock-intakes/:id/fail` | `note`, mission COLLECTING sans cartons collectés | Ramasseur affecté / exploitation |
+| `GET /stock-intakes/:id/print` | Bon et réceptions imprimables | Lecture périmètre |
+| `GET /picking/:shipmentId` | Produits, SKU, code-barres, emplacements réservés, quantités attendues/scannées | Warehouse |
+| `POST /picking/:shipmentId/scan` | `productScan` (SKU, code-barres ou UUID produit), `quantity` (1 par défaut), `requestId` | Warehouse |
+| `GET /stock-movements` | `productId`, `limit` 1–500 (100 défaut), `offset` ; variations, auteur, source et solde par lot après mouvement | Stock / marchand propre |
+| `GET /quarantine`, `GET /quarantine/:id` | Lots endommagés d’approvisionnement, solde, historique de traitement | Stock / marchand propre |
+| `POST /quarantine/:id/dispose` | `requestId`, `kind: RELEASE/RETURN/DISCARD`, `quantity`, `note`, `proofReference`, `receiverName` si RETURN, `location` si RELEASE | Direction / exploitation |
+| `GET/POST /stock-counts` | Création : `merchantId`, `location` facultatifs ; photographie de 1–500 lots | Magasinier / exploitation |
+| `GET /stock-counts/:id` | Quantités théoriques à l’ouverture, réservations, comptages et auteur/validation | Stock / marchand propre si inventaire propre |
+| `POST /stock-counts/:id/lines` | `items:[{lotId,countedQuantity,note}]` ; tous les lots comptés avant soumission | Magasinier / exploitation |
+| `POST /stock-counts/:id/submit` | `{}` ; état SUBMITTED | Magasinier / exploitation |
+| `POST /stock-counts/:id/apply` | `note` si écart ; vérifie quantités/réservations/lots inchangés, puis corrige atomiquement | Direction / exploitation |
+| `POST /stock-counts/:id/cancel` | `note` ; avant application | Magasinier / exploitation |
+| `GET /stock-counts/:id/print` | Feuille d’inventaire imprimable | Lecture périmètre |
+
+Le scan colis `POST /api/operations/ramassage` exige désormais que les quantités de tous les produits STOCK aient été contrôlées par `/picking/:id/scan`. EXTERNAL conserve son scan de réception. Scanner les produits ne diminue pas encore le physique ; seul le scan du colis confirme la sortie FIFO.
+
+Les `requestId` ont 12–80 caractères alphanumériques, `_` ou `-` (UUID conseillé). Une réception/scan/décision rejouée avec le même identifiant, auteur et contenu ne crée aucune nouvelle unité ; un contenu différent renvoie 409. Les quantités sont des entiers, jamais des fractions. Les dépassements d’unités/cartons requièrent un motif. Les cartons vides peuvent être reçus avec motif. Les listes sont plafonnées à 300 bons/comptages, 500 lots de quarantaine et 2 000 références catalogue ; les mouvements sont paginés côté serveur.
+
+Un lot de quarantaine ne fait pas partie de `unitsAvailable` ou `unitsPhysical` conformes. Le portail fournit `unitsQuarantined` séparément. La levée crée un nouveau lot conforme ; la remise ou l’écart retire seulement du solde isolé. Le journal refuse UPDATE/DELETE ; les corrections sont de nouveaux mouvements. La migration conserve les identifiants produit/lot/allocation et ajoute une entrée OPENING par ancien lot, explicitement sans historique reconstruit.
