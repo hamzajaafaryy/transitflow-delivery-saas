@@ -1,4 +1,5 @@
 import {activeVehicleMission} from './stock-ledger.mjs';
+import {setCustody} from './custody.mjs';
 import {id,now} from './db.mjs';
 import {requirePermission,has,agencyScoped} from './access.mjs';
 import {clean,fail,reference,isoDate,merchantId,pickupAccess,scanShipment,parcelEvent,notify,documentHtml,html,esc} from './workflow-shared.mjs';
@@ -35,7 +36,7 @@ export async function pickupRoute(ctx){
    const point=stmt('SELECT * FROM pickup_points WHERE id=? AND company_id=? AND merchant_id=? AND active=1',data.pointId,companyId,mid);if(!point)throw fail(400,'Point de ramassage invalide');
    const pickupId=id(),ref=reference('RAM');
    tx(()=>{
-    for(const sid of ids){const s=stmt('SELECT * FROM shipments WHERE id=? AND company_id=? AND merchant_id=?',sid,companyId,mid);if(!s||s.order_source!=='EXTERNAL'||s.status!=='CREATED'||s.reused_return_id)throw fail(409,'Un colis n’est pas éligible à un ramassage externe');if(stmt('SELECT 1 FROM pickup_items WHERE shipment_id=? AND company_id=? AND active=1',sid,companyId))throw fail(409,'Un colis appartient déjà à un ramassage actif');}
+    for(const sid of ids){const s=stmt('SELECT * FROM shipments WHERE id=? AND company_id=? AND merchant_id=?',sid,companyId,mid);if(!s||s.order_source!=='EXTERNAL'||!['CREATED','AWAITING_PICKUP'].includes(s.status)||s.reused_return_id)throw fail(409,'Un colis n’est pas éligible à un ramassage externe');if(stmt('SELECT 1 FROM pickup_items WHERE shipment_id=? AND company_id=? AND active=1',sid,companyId))throw fail(409,'Un colis appartient déjà à un ramassage actif');}
     run('INSERT INTO pickups(id,company_id,merchant_id,point_id,reference,scheduled_at,slot,state,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,\'REQUESTED\',?,?,?)',pickupId,companyId,mid,point.id,ref,scheduled,clean(data.slot,100),user.id,now(),now());for(const sid of ids)run('INSERT INTO pickup_items(company_id,pickup_id,shipment_id) VALUES(?,?,?)',companyId,pickupId,sid);
     audit(companyId,user.id,'PICKUP_REQUESTED','pickup',pickupId,{expected:ids.length,merchantId:mid});notify(ctx,{roles:['ADMIN','OPERATIONS','DISPATCHER']},'Nouvelle demande de ramassage '+ref,'pickup',pickupId);
    });return send(res,201,{id:pickupId,reference:ref,state:'REQUESTED'});
@@ -57,8 +58,8 @@ export async function pickupRoute(ctx){
   if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='ASSIGNED')throw fail(409,'Ramassage non affecté');if(activeVehicleMission(ctx,p.driver_id,p.vehicle_id))throw fail(409,'Conducteur ou véhicule déjà en mission');tx(()=>{run("UPDATE pickups SET state='IN_PROGRESS',updated_at=? WHERE id=? AND company_id=?",now(),pickupId,companyId);audit(companyId,user.id,'PICKUP_STARTED','pickup',pickupId);});
  }else if(action==='scan'){
   if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='IN_PROGRESS')throw fail(409,'Démarrez le ramassage avant le scan');
-  tx(()=>{const s=scanShipment(ctx,data.scan),item=stmt('SELECT * FROM pickup_items WHERE pickup_id=? AND shipment_id=? AND company_id=?',pickupId,s.id,companyId);if(!item||s.merchant_id!==p.merchant_id)throw fail(409,'Colis absent du bon de ce marchand');if(item.state!=='EXPECTED'||s.status!=='CREATED')throw fail(409,'Colis déjà collecté ou non disponible');
-   run("UPDATE pickup_items SET state='COLLECTED',collected_at=? WHERE pickup_id=? AND shipment_id=? AND company_id=?",now(),pickupId,s.id,companyId);run('UPDATE shipments SET collected_at=? WHERE id=? AND company_id=?',now(),s.id,companyId);parcelEvent(ctx,s,'COLLECTED','Collecté chez le marchand — '+p.reference,'PICKUP');audit(companyId,user.id,'PICKUP_PARCEL_COLLECTED','shipment',s.id,{pickupId,vehicleId:p.vehicle_id});});
+  tx(()=>{const s=scanShipment(ctx,data.scan),item=stmt('SELECT * FROM pickup_items WHERE pickup_id=? AND shipment_id=? AND company_id=?',pickupId,s.id,companyId);if(!item||s.merchant_id!==p.merchant_id)throw fail(409,'Colis absent du bon de ce marchand');if(item.state!=='EXPECTED'||!['CREATED','AWAITING_PICKUP'].includes(s.status))throw fail(409,'Colis déjà collecté ou non disponible');
+   run("UPDATE pickup_items SET state='COLLECTED',collected_at=? WHERE pickup_id=? AND shipment_id=? AND company_id=?",now(),pickupId,s.id,companyId);run('UPDATE shipments SET collected_at=? WHERE id=? AND company_id=?',now(),s.id,companyId);setCustody(ctx,s,'PICKUP_DRIVER',{scan:true});parcelEvent(ctx,s,'COLLECTED','Collecté chez le marchand — '+p.reference,'PICKUP');audit(companyId,user.id,'PICKUP_PARCEL_COLLECTED','shipment',s.id,{pickupId,vehicleId:p.vehicle_id});});
  }else if(action==='complete'){
   if(user.role!=='PICKUP_DRIVER')requirePermission(user,'pickups.manage');if(p.state!=='IN_PROGRESS')throw fail(409,'Ramassage non commencé');
   const items=all('SELECT state FROM pickup_items WHERE pickup_id=? AND company_id=?',pickupId,companyId),missing=items.filter(i=>i.state==='EXPECTED').length,collected=items.filter(i=>['COLLECTED','RECEIVED'].includes(i.state)).length,note=clean(data.note,400),receiver=clean(data.receiverName,120);

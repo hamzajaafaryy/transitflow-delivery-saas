@@ -1,3 +1,5 @@
+import {labelsRoute} from './labels.mjs';
+import {setCustody} from './custody.mjs';
 import {stockMovement} from './stock-ledger.mjs';
 import {createProduct} from './warehouse-shared.mjs';
 import http from 'node:http';
@@ -72,6 +74,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,shipId,user.company_id,tracking,merchantId,agency.id,driverId,recipient,phone,agency.city,address,description,cod,status,t,t,source,agency.fee_centimes);}
   catch(e){if(String(e).includes('UNIQUE'))throw fail(409,`Tracking dupliqué: ${tracking}`);throw e;}
   run('UPDATE shipments SET sector=?,fragile=?,allow_open=? WHERE id=? AND company_id=?',sanitize(data.sector,100),data.fragile?1:0,data.allowOpen?1:0,shipId,user.company_id);
+  setCustody({run,user,companyId:user.company_id},{id:shipId},source==='STOCK'?'WAREHOUSE':'MERCHANT');
   if(source==='STOCK')reserveItems({stmt,all,run,companyId:user.company_id,user},{id:shipId,merchant_id:merchantId},items);
   run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,actor_id,created_at) VALUES(?,?,?,?,?,?,?)',id(),user.company_id,shipId,status,'INTERNAL',user.id,t);
   return {id:shipId,tracking,status,source,agencyId:agency.id};
@@ -87,6 +90,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   if(stmt("SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id WHERE i.shipment_id=? AND i.company_id=? AND d.state IN ('OPEN','CLOSED')",sh.id,user.company_id))throw fail(409,'Colis dans un container : terminez ou annulez cet envoi avant de changer son statut');
   const t=now();
   if(status==='CANCELLED'){
+   run("UPDATE delivery_route_items SET state='CANCELLED',active=0 WHERE shipment_id=? AND company_id=? AND active=1",sh.id,user.company_id);
    run("UPDATE pickup_items SET state='MISSING',active=0,note='Commande annulée avant collecte' WHERE shipment_id=? AND company_id=? AND state='EXPECTED'",sh.id,user.company_id);
    const reserved=all("SELECT id,lot_id,quantity,product_id FROM stock_allocations WHERE company_id=? AND shipment_id=? AND state='RESERVED'",user.company_id,sh.id);
    for(const a of reserved){run('UPDATE stock_lots SET quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.lot_id,user.company_id);run("UPDATE stock_allocations SET state='RELEASED' WHERE id=? AND company_id=?",a.id,user.company_id);stockMovement({stmt,run,companyId:user.company_id,user},{productId:a.product_id,lotId:a.lot_id,kind:'RELEASE',reserved:-a.quantity,entityType:'shipment',entityId:sh.id,eventKey:'RELEASE:'+a.id});}
@@ -132,7 +136,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     if(!eventId||!tracking||!externalStatus)throw fail(400,'eventId, tracking, status requis');
     const sh=stmt('SELECT s.* FROM shipments s JOIN agencies a ON a.id=s.agency_id AND a.company_id=s.company_id WHERE a.api_key_hash=? AND s.company_id=? AND (s.tracking=? OR s.external_tracking=?)',hashKey(key),profile.id,tracking,tracking);
     if(sh)agency=candidates.find(a=>a.id===sh.agency_id);
-    if(sh&&(!sh.ramassed_at||(['CREATED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(sh.status)&&!stmt("SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id AND d.company_id=i.company_id WHERE i.shipment_id=? AND i.company_id=? AND d.state='SHIPPED'",sh.id,sh.company_id))))throw fail(409,'Ramassage et départ du container requis avant les événements de l’agence');
+    if(sh&&(!sh.ramassed_at||!stmt("SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id AND d.company_id=i.company_id WHERE i.shipment_id=? AND i.company_id=? AND d.state='SHIPPED'",sh.id,sh.company_id)))throw fail(409,'Ramassage et départ du container requis avant les événements de l’agence');
     if(!sh)throw fail(404,'Colis non affecté à ce partenaire');
     if(stmt('SELECT 1 FROM shipment_events WHERE company_id=? AND source=? AND external_event_id=?',agency.company_id,`AGENCY:${agency.id}`,eventId))return send(res,200,{ok:true,duplicate:true,status:sh.status});
     let mapped=mapAgencyStatus(externalStatus,JSON.parse(agency.status_map));
@@ -140,7 +144,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     // A carrier reporting a return is not a warehouse inspection or a stock receipt.
     if(mapped==='RETURNED')mapped='RETURNING';
     // Prevent upstream from asserting internal-only lifecycle transitions.
-    if(['CREATED','EXPORTED','ASSIGNED_AGENCY','CANCELLED'].includes(mapped))throw fail(422,'Statut non autorisé pour API partenaire');
+    if(['CREATED','AWAITING_PICKUP','EXPORTED','ASSIGNED_AGENCY','CANCELLED','RETURNED_MERCHANT'].includes(mapped))throw fail(422,'Statut non autorisé pour API partenaire');
     const result=tx(()=>{
       const current=stmt('SELECT * FROM shipments WHERE id=? AND company_id=?',sh.id,agency.company_id);
       if(mapped!=='RETURNING'&&stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND active=1",agency.company_id,sh.id))throw fail(409,'Retour ouvert : mise à jour de livraison bloquée');
@@ -148,6 +152,11 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
       const t=now();
       run('UPDATE shipments SET status=?, external_status=?,external_tracking=COALESCE(NULLIF(?,\'\'),external_tracking),external_updated_at=?,updated_at=?,delivered_at=CASE WHEN ?=\'DELIVERED\' THEN COALESCE(delivered_at,?) ELSE delivered_at END,handed_over_at=CASE WHEN ?=\'PICKED_UP\' THEN COALESCE(handed_over_at,?) ELSE handed_over_at END WHERE id=? AND company_id=?',mapped,externalStatus,externalTracking,t,t,mapped,t,mapped,t,current.id,agency.company_id);
       run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,external_event_id,note,created_at) VALUES (?,?,?,?,?,?,?,?)',id(),agency.company_id,current.id,mapped,`AGENCY:${agency.id}`,eventId,`External: ${externalStatus}`,t);
+      const custodyCtx={run,companyId:agency.company_id,user:{id:null}};
+      if(mapped==='DELIVERED')setCustody(custodyCtx,current,'RECIPIENT');
+      else if(mapped==='AT_AGENCY')setCustody(custodyCtx,current,'AGENCY',{agencyId:agency.id,scan:true});
+      else if(mapped==='OUT_FOR_DELIVERY')setCustody(custodyCtx,current,'DRIVER',{agencyId:agency.id,scan:true});
+      else if(['REFUSED','UNREACHABLE','POSTPONED','RETURNING'].includes(mapped)&&!['DRIVER','AGENCY','RETURN_TRANSIT'].includes(current.custody_type))setCustody(custodyCtx,current,'AGENCY',{agencyId:agency.id,scan:true});
       if(mapped==='DELIVERED')recordCodReceipt({stmt,run,companyId:agency.company_id},current,{holderAgencyId:agency.id});
       if(['DELIVERED','REFUSED','UNREACHABLE','POSTPONED','RETURNING'].includes(mapped))run("UPDATE delivery_route_items SET state='ATTEMPTED',active=0 WHERE company_id=? AND shipment_id=? AND active=1",agency.company_id,current.id);
       audit(agency.company_id,null,'AGENCY_SYNC','shipment',current.id,{agencyId:agency.id,eventId,from:current.status,to:mapped});
@@ -155,7 +164,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     });return send(res,200,result);
    }
    if(method==='GET'&&!path.startsWith('/api/')){
-    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/warehouse.js':'warehouse.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/ui.js':'ui.js','/styles.css':'styles.css','/workspace.css':'workspace.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
+    const assets={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/network.js':'network.js','/operations.js':'operations.js','/workflows.js':'workflows.js','/warehouse.js':'warehouse.js','/workflow-forms.js':'workflow-forms.js','/stock-lines.js':'stock-lines.js','/ui.js':'ui.js','/styles.css':'styles.css','/workspace.css':'workspace.css','/manifest.webmanifest':'manifest.webmanifest','/merchant.html':'merchant.html','/merchant.css':'merchant.css','/merchant.js':'merchant.js'};
     const filename=assets[path];if(!filename)throw fail(404,'Page introuvable');
     const data=readFileSync(resolve(root,filename));res.writeHead(200,{'Content-Type':mime[extname(filename)]||'application/manifest+json','Cache-Control':'no-store'});return res.end(data);
    }
@@ -188,6 +197,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    }
    const user=requireSession(req);
    const companyId=user.company_id;
+   if(path==='/api/labels'||path.startsWith('/api/labels/'))return await labelsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,publicBase:sameOrigin});
    if(path.startsWith('/api/workflow/')){const result=await workflowRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});if(result===false)throw fail(404,'Route de workflow introuvable');return;}
    if(path==='/api/cities'||path.startsWith('/api/agencies')||path.startsWith('/api/dispatches')||path.startsWith('/api/operations/')||/^\/api\/shipments\/[a-f0-9-]{36}\/preparation$/.test(path))return await logisticsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json});
    if(path.startsWith('/api/merchant/')||path.startsWith('/api/finance/merchant-')){
@@ -260,7 +270,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
     }
     if(method==='PATCH'&&!detailsMatch[2]){
       permit(user,'shipments');
-      if(['DELIVERED','RETURNED','CANCELLED'].includes(sh.status))throw fail(409,'Colis clôturé');
+      if(['DELIVERED','RETURNED','RETURNED_MERCHANT','CANCELLED'].includes(sh.status))throw fail(409,'Colis clôturé');
       if(stmt("SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id AND d.company_id=i.company_id WHERE i.shipment_id=? AND i.company_id=? AND d.state IN ('OPEN','CLOSED')",sh.id,companyId))throw fail(409,'Colis affecté à un envoi : annulez le container avant correction');
       const data=await json(req);
       if(data.city!==undefined&&sh.ramassed_at)throw fail(409,'Ville non modifiable après ramassage');
@@ -382,9 +392,10 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    if(method==='POST'&&path==='/api/inventory/reserve'){
     requirePermission(user,'inventory.write');const data=await json(req),qty=Number(data.quantity),productId=sanitize(data.productId,40),shipId=sanitize(data.shipmentId,40);
     if(!Number.isSafeInteger(qty)||qty<1||qty>1000000)throw fail(400,'Quantité invalide');
-    const shipment=stmt('SELECT id,status FROM shipments WHERE id=? AND company_id=?',shipId,companyId);
+    const shipment=stmt('SELECT id,status,order_source,labels_printed_at FROM shipments WHERE id=? AND company_id=?',shipId,companyId);
     if(!shipment)throw fail(404,'Colis introuvable');
-    if(!['CREATED','ASSIGNED_AGENCY','EXPORTED'].includes(shipment.status))throw fail(409,'Colis clôturé');
+    if(shipment.labels_printed_at&&shipment.order_source==='EXTERNAL')throw fail(409,'La source d’un colis déjà étiqueté est fixe : créez une commande stock');
+    if(!['CREATED','AWAITING_PICKUP','ASSIGNED_AGENCY','EXPORTED'].includes(shipment.status))throw fail(409,'Colis clôturé');
     const stockProduct=stmt('SELECT merchant_id FROM inventory_products WHERE id=? AND company_id=?',productId,companyId);
     if(!stockProduct)throw fail(404,'Produit introuvable');
     const targetMerchant=stmt('SELECT merchant_id FROM shipments WHERE id=? AND company_id=?',shipId,companyId);

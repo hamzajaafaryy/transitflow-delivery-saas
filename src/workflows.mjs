@@ -1,3 +1,4 @@
+import {returnNetworkRoute} from './return-network.mjs';
 import {id,now} from './db.mjs';
 import {PERMISSIONS,ROLE_LABELS,has,requirePermission,agencyScoped,shipmentScope} from './access.mjs';
 import {clean,fail,shipment,isoDate,parcelEvent,integer} from './workflow-shared.mjs';
@@ -19,7 +20,7 @@ export async function workflowRoute(ctx){
  }
  if(path==='/api/workflow/eligible'&&method==='GET'){
   const kind=ctx.url.searchParams.get('kind'),mid=user.role==='MERCHANT'?user.merchant_id:ctx.url.searchParams.get('merchantId'),aid=ctx.url.searchParams.get('agencyId'),scope=shipmentScope(user,'s'),where=['s.company_id=?'+scope.clause],args=[companyId,...scope.args];
-  if(kind==='pickup'){requirePermission(user,'pickups.create','pickups.manage');where.push("s.order_source='EXTERNAL' AND s.status='CREATED' AND s.reused_return_id IS NULL AND NOT EXISTS(SELECT 1 FROM pickup_items i WHERE i.shipment_id=s.id AND i.company_id=s.company_id AND i.active=1)");}
+  if(kind==='pickup'){requirePermission(user,'pickups.create','pickups.manage');where.push("s.order_source='EXTERNAL' AND s.status IN ('CREATED','AWAITING_PICKUP') AND s.reused_return_id IS NULL AND NOT EXISTS(SELECT 1 FROM pickup_items i WHERE i.shipment_id=s.id AND i.company_id=s.company_id AND i.active=1)");}
   else if(kind==='route'){requirePermission(user,'routes.manage');where.push("s.status IN ('PICKED_UP','AT_AGENCY','POSTPONED','UNREACHABLE') AND NOT EXISTS(SELECT 1 FROM delivery_route_items i WHERE i.shipment_id=s.id AND i.company_id=s.company_id AND i.active=1)");}
   else throw fail(400,'Liste éligible inconnue');if(mid){where.push('s.merchant_id=?');args.push(mid);}if(aid){where.push('s.agency_id=?');args.push(aid);}return send(ctx.res,200,{shipments:all(`SELECT s.id,s.tracking,s.recipient,s.city,s.merchant_id,s.cod_centimes,s.order_source,s.status FROM shipments s WHERE ${where.join(' AND ')} ORDER BY s.created_at LIMIT 1000`,...args)});
  }
@@ -49,17 +50,18 @@ export async function workflowRoute(ctx){
  if(incident&&method==='POST'){
   requirePermission(user,'routes.manage');const s=shipment(ctx,incident[1]),data=await json(ctx.req),note=clean(data.note,500);if(note.length<5)throw fail(400,'Motif détaillé requis');
   if(incident[2]==='recover'){if(s.status!=='LOST')throw fail(409,'Colis non déclaré perdu');if(clean(data.scan).toUpperCase()!==s.tracking.toUpperCase()&&clean(data.scan)!==s.id)throw fail(409,'Scannez le colis retrouvé');tx(()=>{parcelEvent(ctx,s,'AT_AGENCY','Colis retrouvé : '+note,'INCIDENT');audit(companyId,user.id,'PARCEL_RECOVERED','shipment',s.id,{note});});}
-  else {if(!['LOST','DAMAGED'].includes(data.kind)||['DELIVERED','RETURNED','CANCELLED','LOST'].includes(s.status))throw fail(409,'Incident incompatible avec ce colis');tx(()=>{parcelEvent(ctx,s,data.kind,note,'INCIDENT');run("UPDATE delivery_route_items SET state='CANCELLED',active=0 WHERE shipment_id=? AND company_id=? AND active=1",s.id,companyId);audit(companyId,user.id,'PARCEL_INCIDENT_CONFIRMED','shipment',s.id,{kind:data.kind,note});});}
+  else {if(!['LOST','DAMAGED'].includes(data.kind)||['DELIVERED','RETURNED','RETURNED_MERCHANT','CANCELLED','LOST'].includes(s.status))throw fail(409,'Incident incompatible avec ce colis');tx(()=>{parcelEvent(ctx,s,data.kind,note,'INCIDENT');run("UPDATE delivery_route_items SET state='CANCELLED',active=0 WHERE shipment_id=? AND company_id=? AND active=1",s.id,companyId);audit(companyId,user.id,'PARCEL_INCIDENT_CONFIRMED','shipment',s.id,{kind:data.kind,note});});}
   return send(ctx.res,200,{ok:true});
  }
  const contact=path.match(/^\/api\/workflow\/shipments\/([a-f0-9-]{36})\/contact$/);
  if(contact&&method==='POST'){
   requirePermission(user,'claims.manage','routes.manage');const s=shipment(ctx,contact[1]),data=await json(ctx.req),outcome=data.outcome,note=clean(data.note,500),next=data.nextAttemptAt?isoDate(data.nextAttemptAt):null;
-  if(!['REACHED','NO_ANSWER','WRONG_NUMBER','CALLBACK'].includes(outcome)||note.length<5||next&&next<=now())throw fail(400,'Résultat, note et date future valides requis');if(['DELIVERED','RETURNED','CANCELLED','LOST'].includes(s.status))throw fail(409,'Colis clôturé');if(stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND state NOT IN ('REQUESTED','CANCELLED','REJECTED')",companyId,s.id))throw fail(409,'Retour déjà engagé');
+  if(!['REACHED','NO_ANSWER','WRONG_NUMBER','CALLBACK'].includes(outcome)||note.length<5||next&&next<=now())throw fail(400,'Résultat, note et date future valides requis');if(['DELIVERED','RETURNED','RETURNED_MERCHANT','CANCELLED','LOST'].includes(s.status))throw fail(409,'Colis clôturé');if(stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND state NOT IN ('REQUESTED','CANCELLED','REJECTED')",companyId,s.id))throw fail(409,'Retour déjà engagé');
   tx(()=>{run('INSERT INTO contact_attempts VALUES(?,?,?,?,?,?,?,?)',id(),companyId,s.id,user.id,outcome,note,next,now());if(next){run('UPDATE shipments SET next_attempt_at=? WHERE id=? AND company_id=?',next,s.id,companyId);if(['UNREACHABLE','REFUSED','POSTPONED','AT_AGENCY'].includes(s.status))parcelEvent(ctx,s,'POSTPONED','Report confirmé par support : '+note,'SUPPORT');}audit(companyId,user.id,'CONTACT_ATTEMPT','shipment',s.id,{outcome,next,note});});return send(ctx.res,201,{ok:true});
  }
  if(/^\/api\/workflow\/(stock-intakes|catalog|stock-counts|stock-movements|quarantine|picking)(\/|$)/.test(path))return warehouseRoute(ctx);
  if(path.startsWith('/api/workflow/pickup')||path.startsWith('/api/workflow/vehicles'))return pickupRoute(ctx);
+ if(/^\/api\/workflow\/(agency-parcels|return-containers|merchant-returns)(\/|$)/.test(path))return returnNetworkRoute(ctx);
  if(path.startsWith('/api/workflow/returns'))return returnRoute(ctx);
  if(path.startsWith('/api/workflow/claims'))return claimRoute(ctx);
  if(path.startsWith('/api/workflow/arrivals')||path.startsWith('/api/workflow/routes')||/^\/api\/workflow\/shipments\/[^/]+\/attempts$/.test(path))return deliveryRoute(ctx);

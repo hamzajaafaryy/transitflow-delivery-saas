@@ -1,3 +1,4 @@
+import {prepareLabels} from './network.js';
 import {openPicking} from './warehouse.js';
 let c;
 export const configureOperations=ctx=>{c=ctx;};
@@ -7,7 +8,7 @@ const feedback=()=>c.state.scanFeedback?`<div class="scan-feedback ${c.state.sca
 const scanForm=(kind,label)=>`<form id="${kind}-scan" class="scan-form"><label for="scan-code">${label}</label><div class="scan-row"><input id="scan-code" name="scan" placeholder="Scannez le code-barres ou saisissez le tracking / ID" required autocomplete="off" autofocus><button class="btn" type="submit">Valider le scan</button></div></form>${feedback()}`;
 export function preparation(){
  const {state,heading,esc,status,date}=c,queue=state.queue||[],rows=queue.filter(s=>(!state.prepSource||s.order_source===state.prepSource)&&(!state.prepSearch||[s.tracking,s.id,s.recipient,s.merchant_name,s.city].join(' ').toLowerCase().includes(state.prepSearch.toLowerCase())));
- return `${heading('Réception & préparation','Imprimez le bon, préparez le colis, collez son ticket puis scannez sa réception.','<button class="btn outline" data-action="refresh">↻ Actualiser</button>')}
+ return `${heading('Réception & préparation','Imprimez le bon, préparez le colis, collez son ticket puis scannez sa réception.','<div class="actions"><button class="btn outline" data-tab="labels-external">Tickets ramassage 100×100</button><button class="btn outline" data-tab="labels-stock">Tickets stock 100×100</button><button class="btn outline" data-action="refresh">↻ Actualiser</button></div>')}
  <div class="grid cols3 operation-kpis">${[['Colis externes à réceptionner',queue.filter(s=>s.order_source==='EXTERNAL'&&!s.ramassed_at).length],['Bons stock à préparer',queue.filter(s=>s.order_source==='STOCK'&&!s.ramassed_at).length],['Ramassés · à trier',queue.filter(s=>s.status==='PICKED_UP'&&!s.dispatch_id).length]].map(([l,n])=>`<div class="card metric"><span class="metric-label">${l}</span><strong class="metric-value">${n}</strong></div>`).join('')}</div>
  <section class="card scan-panel">${scanForm('pickup','Réception warehouse — scanner le tracking du colis')}<p class="tiny muted">Pour une commande stock, contrôlez d’abord les produits et les quantités via « Contrôler produits ». Le scan du tracking confirme ensuite leur sortie physique.</p></section>
  <section class="card"><div class="headline"><h2>Colis au warehouse</h2><input id="prep-search" class="search" aria-label="Rechercher au warehouse" placeholder="Tracking, marchand, destinataire…" value="${esc(state.prepSearch||'')}"><select id="prep-source" class="search"><option value="">Tous les bons</option><option value="EXTERNAL" ${state.prepSource==='EXTERNAL'?'selected':''}>Bons de livraison · externes</option><option value="STOCK" ${state.prepSource==='STOCK'?'selected':''}>Bons stock · warehouse</option></select></div>
@@ -37,7 +38,7 @@ export function dispatches(){
 export async function operationAction(action,el){
  if(action==='picking-products'){await openPicking(el.dataset.id);return true;}
  const {state,api,modal,field,formData,toast,refresh}=c;
- if(action==='warehouse-ticket'){window.open(`/api/shipments/${encodeURIComponent(el.dataset.id)}/ticket`,'_blank','noopener');return true;}
+ if(action==='warehouse-ticket'){await prepareLabels([el.dataset.id]);return true;}
  if(action==='prep-document'){window.open(`/api/shipments/${encodeURIComponent(el.dataset.id)}/preparation`,'_blank','noopener');return true;}
  if(action==='new-agency'||action==='edit-agency'){
   const a=state.agencies.find(x=>x.id===el.dataset.id),edit=Boolean(a);
