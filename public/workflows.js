@@ -89,14 +89,16 @@ function detailPage(kind,x){
   const r=x.return,s=x.shipment;if(!r)return empty();let tools=back+button('print','Bon de retour',kind,r.id);
   if(has('returns.manage')&&r.state==='REQUESTED')tools+=button('authorize','Décider du retour',kind,r.id,false);
   if(has('returns.manage')&&['AUTHORIZED','IN_TRANSIT'].includes(r.state))tools+=button('assign-return','Affecter conducteur',kind,r.id);
-  if(r.state==='AUTHORIZED'&&(has('returns.manage')||has('returns.receive')||['DRIVER','PICKUP_DRIVER'].includes(role)))tools+=button('ship-return','Confirmer remise en retour',kind,r.id,false);
-  if(r.state==='IN_TRANSIT'&&has('returns.receive'))tools+=button('receive-return','Scanner réception retour',kind,r.id,false);
+  if(!x.containerId&&r.state==='AUTHORIZED'&&(has('returns.manage')||has('returns.receive')||['DRIVER','PICKUP_DRIVER'].includes(role)))tools+=button('ship-return','Confirmer remise en retour',kind,r.id,false);
+  if(!x.containerId&&r.state==='IN_TRANSIT'&&has('returns.receive'))tools+=button('receive-return','Scanner réception retour',kind,r.id,false);
   if(r.state==='RECEIVED'&&has('returns.receive'))tools+=button('inspect-return','Contrôler les produits',kind,r.id,false);
   if(r.state==='INSPECTED'){
-   if(has('returns.receive')&&r.disposition!=='RESHIP')tools+=button('complete-return','Clôturer le retour',kind,r.id);
+   if(!x.merchantBonId&&has('returns.receive')&&r.disposition!=='RESHIP')tools+=button('complete-return','Clôturer le retour',kind,r.id);
    if((has('returns.manage')||has('returns.receive')||role==='MERCHANT')&&r.disposition==='RESHIP')tools+=button('reexpedite','Créer le nouvel envoi',kind,r.id,false);
    if((has('returns.manage')||has('returns.receive')||role==='MERCHANT')&&r.kind==='EXCHANGE')tools+=button('replacement','Préparer le remplacement',kind,r.id,false);
   }
+  if(x.containerId&&networkTabs().includes('return-containers'))tools+=`<button class="btn small outline" data-action="net-view" data-kind="return-containers" data-id="${esc(x.containerId)}">Ouvrir le container retour</button>`;
+  if(x.merchantBonId&&networkTabs().includes('merchant-returns'))tools+=`<button class="btn small outline" data-action="net-view" data-kind="merchant-returns" data-id="${esc(x.merchantBonId)}">Ouvrir le bon marchand</button>`;
   if(role==='MERCHANT'&&r.state==='REQUESTED')tools+=button('cancel','Annuler la demande',kind,r.id);
   return `${title(r.reference,`${s.tracking} · ${label(r.kind)} · ${label(r.state)}`,actions(tools))}<div class="card info-list">${info('Motif',r.reason)}${info('Source',s.order_source==='STOCK'?'Produits du stock marchand':'Colis externe')}${info('Client',s.recipient+' · '+s.city)}${info('État reçu',label(r.condition||''))}${info('Décision',label(r.disposition||''))}${info('Contrôle',r.inspection_note)}${info('Preuve de remise',r.proof_reference)}</div><section class="card" style="margin-top:20px"><h2>Produits retournés</h2>${table(['SKU','Produit','Quantité','Stock disponible'],(x.items||[]).map(i=>[esc(i.sku),esc(i.name),i.quantity,i.restocked_lot_id?'Remis en stock après contrôle':'Non remis en stock']))}<p class="note">Un retour reçu reste hors stock vendable jusqu’au contrôle. Le traitement comptable d’un remboursement est séparé de la réception physique.</p></section>`;
  }

@@ -4,7 +4,7 @@ import {id,now} from './db.mjs';
 import {has,requirePermission,agencyScoped,requireAgency} from './access.mjs';
 import {clean,fail,reference,shipment,returnAccess,scanShipment,parcelEvent,notify,documentHtml,html,esc,integer} from './workflow-shared.mjs';
 
-function returnsDetail(ctx,r){return {return:r,shipment:ctx.stmt('SELECT * FROM shipments WHERE id=? AND company_id=?',r.shipment_id,ctx.companyId),items:ctx.all('SELECT ri.*,p.sku,p.name FROM return_items ri JOIN inventory_products p ON p.id=ri.product_id AND p.company_id=ri.company_id WHERE ri.return_id=? AND ri.company_id=?',r.id,ctx.companyId),adjustments:['ADMIN','FINANCE','MERCHANT'].includes(ctx.user.role)?ctx.all('SELECT amount_centimes,kind,reference,note FROM merchant_adjustments WHERE return_id=? AND company_id=?',r.id,ctx.companyId):[]};}
+function returnsDetail(ctx,r){return {containerId:ctx.stmt('SELECT container_id FROM return_container_items WHERE return_id=? AND company_id=? AND active=1',r.id,ctx.companyId)?.container_id||null,merchantBonId:ctx.stmt('SELECT bon_id FROM merchant_return_bon_items WHERE return_id=? AND company_id=? AND active=1',r.id,ctx.companyId)?.bon_id||null,return:r,shipment:ctx.stmt('SELECT * FROM shipments WHERE id=? AND company_id=?',r.shipment_id,ctx.companyId),items:ctx.all('SELECT ri.*,p.sku,p.name FROM return_items ri JOIN inventory_products p ON p.id=ri.product_id AND p.company_id=ri.company_id WHERE ri.return_id=? AND ri.company_id=?',r.id,ctx.companyId),adjustments:['ADMIN','FINANCE','MERCHANT'].includes(ctx.user.role)?ctx.all('SELECT amount_centimes,kind,reference,note FROM merchant_adjustments WHERE return_id=? AND company_id=?',r.id,ctx.companyId):[]};}
 export function receiveReturn(ctx,r,s,data){
  const {user,companyId,stmt,all,run,audit}=ctx,returnId=r.id;
   requirePermission(user,'returns.receive');if(r.state!=='IN_TRANSIT')throw fail(409,'Retour non expédié');const scanned=scanShipment(ctx,data.scan),condition=data.condition;if(scanned.id!==s.id)throw fail(409,'Ce scan ne correspond pas au colis retourné');if(!['SEALED','GOOD','DAMAGED','INCOMPLETE'].includes(condition))throw fail(400,'État physique requis');if(['DAMAGED','INCOMPLETE'].includes(condition)&&clean(data.note).length<5)throw fail(400,'Détail de l’écart physique requis');
@@ -70,6 +70,7 @@ export async function returnRoute(ctx){
   requirePermission(user,'returns.manage');if(!['AUTHORIZED','IN_TRANSIT'].includes(r.state))throw fail(409,'Retour non autorisé');const driver=stmt("SELECT * FROM users WHERE id=? AND company_id=? AND role IN ('DRIVER','PICKUP_DRIVER') AND active=1",data.driverId,companyId);if(!driver)throw fail(400,'Conducteur invalide');if(agencyScoped(user)&&driver.agency_id&&driver.agency_id!==user.agency_id)throw fail(403,'Conducteur d’une autre agence');
   tx(()=>{run('UPDATE parcel_returns SET driver_id=?,updated_at=? WHERE id=? AND company_id=?',driver.id,now(),returnId,companyId);notify(ctx,{users:[driver.id]},'Retour à récupérer '+r.reference,'return',returnId);audit(companyId,user.id,'RETURN_DRIVER_ASSIGNED','return',returnId,{driverId:driver.id});});
  }else if(action==='ship'){
+  if(stmt('SELECT 1 FROM return_container_items WHERE return_id=? AND company_id=? AND active=1',r.id,companyId))throw fail(409,'Confirmez le départ depuis le container retour de ce colis');
   if(!['DRIVER','PICKUP_DRIVER'].includes(user.role))requirePermission(user,'returns.manage','returns.receive');if(r.state!=='AUTHORIZED')throw fail(409,'Retour non autorisé');if(clean(data.proofReference,120).length<3)throw fail(400,'Référence de remise retour requise');
   tx(()=>{run("UPDATE parcel_returns SET state='IN_TRANSIT',proof_reference=?,updated_at=? WHERE id=? AND company_id=?",clean(data.proofReference,120),now(),returnId,companyId);setCustody(ctx,s,'RETURN_TRANSIT',{agencyId:s.custody_agency_id});if(!r.after_delivery)parcelEvent(ctx,s,'RETURNING','Retour en cours — '+r.reference,'RETURN');audit(companyId,user.id,'RETURN_DISPATCHED','return',returnId);});
  }else if(action==='receive'){
@@ -78,6 +79,7 @@ export async function returnRoute(ctx){
  }else if(action==='inspect'){
   tx(()=>inspectReturn(ctx,r,s,data));
  }else if(action==='complete'){
+  if(stmt('SELECT 1 FROM merchant_return_bon_items WHERE return_id=? AND company_id=? AND active=1',r.id,companyId))throw fail(409,'Confirmez la remise depuis le bon retour marchand de ce colis');
   tx(()=>completeReturn(ctx,r,s,data));
  }else if(action==='cancel'){
   if(user.role!=='MERCHANT')requirePermission(user,'returns.manage');if(r.state!=='REQUESTED'||clean(data.reason).length<5)throw fail(409,'Seule une demande non traitée peut être annulée avec motif');tx(()=>{run("UPDATE parcel_returns SET state='CANCELLED',active=0,inspection_note=?,updated_at=? WHERE id=? AND company_id=?",clean(data.reason),now(),returnId,companyId);audit(companyId,user.id,'RETURN_CANCELLED','return',returnId);});
