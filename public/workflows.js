@@ -1,10 +1,11 @@
+import {configureNetwork,networkNames,networkTabs,loadNetwork,networkPage,networkAction,wireNetwork} from './network.js';
 import {icon as uiIcon,operationsDashboard,emptyState} from './ui.js';
 import {workflowForm} from './workflow-forms.js';
 import {configureWarehouse,warehouseTabs,warehouseNames,warehousePage,warehouseAction} from './warehouse.js';
-let c;export const configureWorkflows=ctx=>{c=ctx;configureWarehouse(ctx);};
+let c;export const configureWorkflows=ctx=>{c=ctx;configureWarehouse(ctx);configureNetwork(ctx);};
 const labels={REQUESTED:'Demandé',ASSIGNED:'Affecté',IN_PROGRESS:'En cours',PARTIAL:'Partiel',COLLECTED:'Collecté chez le client',RECEIVED:'Réceptionné',FAILED:'Non effectué',CANCELLED:'Annulé',EXPECTED:'Attendu',MISSING:'Manquant',AUTHORIZED:'Autorisé',IN_TRANSIT:'En transport',INSPECTED:'Contrôlé',COMPLETED:'Terminé',REJECTED:'Refusé',RETURN:'Retour',EXCHANGE:'Échange',OPEN:'Nouveau',WAITING_MERCHANT:'Attente client',WAITING_AGENCY:'Attente agence',RESOLVED:'Résolu',CLOSED:'Clôturé',DRAFT:'Préparée',ACTIVE:'En tournée',PENDING:'À traiter',ATTEMPTED:'Tentative enregistrée',DECLARED:'Déclaré',SUBMITTED:'Remise à vérifier',DISPUTED:'Écart à résoudre',RECONCILED:'Rapproché',RESTOCK:'Remise en stock',RETURN_MERCHANT:'Remise au marchand',RESHIP:'Réexpédition',DISCARD:'Écarté du stock',SEALED:'Scellé',GOOD:'Conforme',DAMAGED:'Endommagé',INCOMPLETE:'Incomplet',DELAY:'Retard',DELIVERY:'Livraison',STOCK:'Stock',PAYMENT:'Paiement',LOST:'Perte',TECHNICAL:'Technique',OTHER:'Autre',NORMAL:'Normale',HIGH:'Haute',URGENT:'Urgente',REFUND:'Remboursement',COMPENSATION:'Indemnisation',FEE_CORRECTION:'Correction de frais'};
 const names={pickups:'Demandes de ramassage',returns:'Retours & échanges',claims:'Réclamations',arrivals:'Réception agence',routes:'Tournées de livraison',cash:'Caisse & remises',vehicles:'Véhicules',adjustments:'Ajustements marchands',notifications:'Notifications',settings:'Paramètres',audit:'Journal des opérations'};
-Object.assign(names,warehouseNames);
+Object.assign(names,warehouseNames,networkNames);
 const has=p=>c.state.me.permissions.includes('*')||c.state.me.permissions.includes(p);
 const esc=x=>c.esc(x),date=x=>c.date(x),money=x=>c.money(x),label=x=>labels[x]||c.state.me.statusLabels[x]||x;
 const badge=x=>`<span class="pill ${['COMPLETED','RECEIVED','RESOLVED','RECONCILED','DELIVERED'].includes(x)?'DELIVERED':['DISPUTED','MISSING','FAILED','REJECTED','DAMAGED'].includes(x)?'REFUSED':'POSTPONED'}">${esc(label(x))}</span>`;
@@ -23,12 +24,12 @@ export function workflowTabs(){
  if(['claims.create','claims.manage','claims.read'].some(has))tabs.push('claims');
  if(has('agency.receive'))tabs.push('arrivals');if(has('routes.manage')||has('routes.self'))tabs.push('routes');
  if(['cash.self','cash.read','cash.manage','finance'].some(has))tabs.push('cash');if(has('pickups.manage')||has('routes.manage')||has('vehicles.self'))tabs.push('vehicles');
- if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push(...warehouseTabs(),'notifications');if(has('*'))tabs.push('settings','audit');return tabs;
+ if(has('finance')||c.state.me.user.role==='MERCHANT')tabs.push('adjustments');tabs.push(...warehouseTabs(),...networkTabs(),'notifications');if(has('*'))tabs.push('settings','audit');return tabs;
 }
 export const workflowNames=names;
 export async function loadWorkflows(isCurrent=()=>true){
  if(!c.state.me)return;const tab=c.state.tab,detail=c.state.workflowDetail,boot=await call('/bootstrap');if(!isCurrent())return;c.state.workflowBoot=boot;
- let data=null;if(tab==='dashboard')data=await call('/overview');else if(workflowTabs().includes(tab)){if(detail&&detail.kind===tab)data=await call('/'+tab+'/'+detail.id);else if(tab==='settings')data=boot.settings;else data=await call('/'+tab+(tab==='stock-movements'?'?offset='+(c.state.movementOffset||0):''));}
+ let data=null;if(networkTabs().includes(tab))data=await loadNetwork(tab,detail);else if(tab==='dashboard')data=await call('/overview');else if(workflowTabs().includes(tab)){if(detail&&detail.kind===tab)data=await call('/'+tab+'/'+detail.id);else if(tab==='settings')data=boot.settings;else data=await call('/'+tab+(tab==='stock-movements'?'?offset='+(c.state.movementOffset||0):''));}
  if(!isCurrent())return;c.state.workflowData=data;if(tab==='dashboard')c.state.dashboardSummary=data;
 }
 export function workflowDashboard(){return operationsDashboard(c);}
@@ -44,7 +45,7 @@ function listControls(kind,original,filtered){
  return `<div class="list-controls"><label class="search-control">${uiIcon('search')}<input id="workflow-search" aria-label="Rechercher dans ${names[kind]}" placeholder="Rechercher une référence, un client, une ville…" value="${esc(f.query||'')}" autocomplete="off"></label>${states.length?`<label class="filter-field"><span>Statut</span><select id="workflow-state"><option value="">Tous les statuts</option>${states.map(state=>`<option value="${esc(state)}" ${f.state===state?'selected':''}>${esc(label(state))}</option>`).join('')}</select></label>`:''}<span class="list-result-count"><strong>${filtered.length}</strong> résultat${filtered.length>1?'s':''}</span></div>`;
 }
 function scanForm(action,id,caption){return `<form class="workflow-scan" data-workflow-scan="${action}" data-id="${esc(id)}"><label for="workflow-scan-input">${caption}</label><div class="scan-row"><input id="workflow-scan-input" name="scan" required autocomplete="off" placeholder="Scanner le tracking / ID puis Entrée"><button class="btn" type="submit">Valider le scan</button></div></form>`;}
-export function workflowPage(){
+export function workflowPage(){if(networkTabs().includes(c.state.tab))return networkPage();
  if(warehouseTabs().includes(c.state.tab))return warehousePage();
  const kind=c.state.tab,original=c.state.workflowData||{},key=listKeys[kind],filter=c.state.workflowFilters[kind]||{};
  if(c.state.workflowDetail?.kind===kind)return `<div class="workflow-detail">${detailProgress(kind,original)}${detailPage(kind,original)}</div>`;
@@ -108,11 +109,12 @@ function detailPage(kind,x){
  }
  if(kind==='routes'){
   const r=x.route;if(!r)return empty();let tools=back+button('print','Feuille de tournée',kind,r.id);if(r.state==='DRAFT')tools+=button('transition','Démarrer la tournée','routes/start',r.id,false);if(r.state==='ACTIVE')tools+=button('transition','Clôturer la tournée','routes/close',r.id);if(r.state==='DRAFT'&&has('routes.manage'))tools+=button('cancel','Annuler la tournée',kind,r.id);
-  return `${title(r.reference,`${r.service_date} · ${label(r.state)}`,actions(tools))}<div class="delivery-stop-list">${(x.items||[]).map(i=>`<article class="card delivery-stop"><div class="headline"><strong class="code">${i.position}. ${esc(i.tracking)}</strong>${badge(i.status)}</div><h2>${esc(i.recipient)}</h2><p>${esc(i.address)} · ${esc(i.city)}</p><p><strong>COD : ${money(i.cod_centimes)}</strong></p><p class="tiny muted">${i.fragile?'Fragile · ':''}${i.allow_open?'Ouverture autorisée par le marchand':'Ouverture non autorisée'}</p><div class="actions"><a class="btn outline" href="tel:${esc(i.phone.replace(/[^+0-9]/g,''))}">☎ ${esc(i.phone)}</a>${r.state==='ACTIVE'&&i.state==='PENDING'?button('attempt','Enregistrer la tentative','shipment',i.shipment_id,false):badge(i.state)}</div></article>`).join('')}</div>`;
+  return `${title(r.reference,`${r.service_date} · ${label(r.state)}`,actions(tools))}${r.state==='DRAFT'?`<section class="card scan-panel">${scanForm('routes',r.id,'Scanner chaque colis remis à ce livreur')}<p>${(x.items||[]).filter(i=>i.scanned_at).length} / ${(x.items||[]).length} colis scannés · le scan donne Mise en distribution.</p></section>`:''}<div class="delivery-stop-list">${(x.items||[]).map(i=>`<article class="card delivery-stop"><div class="headline"><strong class="code">${i.position}. ${esc(i.tracking)} ${i.scanned_at?'✓':''}</strong>${badge(i.status)}</div><h2>${esc(i.recipient)}</h2><p>${esc(i.address)} · ${esc(i.city)}</p><p><strong>COD : ${money(i.cod_centimes)}</strong></p><p class="tiny muted">${i.fragile?'Fragile · ':''}${i.allow_open?'Ouverture autorisée par le marchand':'Ouverture non autorisée'}</p><div class="actions"><a class="btn outline" href="tel:${esc(i.phone.replace(/[^+0-9]/g,''))}">☎ ${esc(i.phone)}</a>${r.state==='ACTIVE'&&i.state==='PENDING'?button('attempt','Enregistrer la tentative','shipment',i.shipment_id,false):badge(i.state)}</div></article>`).join('')}</div>`;
  }
  return empty();
 }
 export async function workflowAction(action,el){
+ if(await networkAction(action,el))return true;
  if(await warehouseAction(action,el))return true;
  if(!action.startsWith('wf-'))return false;const key=action.slice(3),kind=el.dataset.kind,id=el.dataset.id;
  if(key==='refresh'){await c.refresh();return true;}
@@ -126,6 +128,7 @@ export async function workflowAction(action,el){
  await workflowForm({c,call,has,label,table,esc},key,kind,id);return true;
 }
 export function wireWorkflows(){
+ wireNetwork();
  document.querySelector('#workflow-search')?.addEventListener('input',event=>{const value=event.target.value;c.state.workflowFilters[c.state.tab]={...(c.state.workflowFilters[c.state.tab]||{}),query:value,page:0};c.render();const input=document.querySelector('#workflow-search');input?.focus();input?.setSelectionRange(value.length,value.length);});
  document.querySelector('#workflow-state')?.addEventListener('change',event=>{c.state.workflowFilters[c.state.tab]={...(c.state.workflowFilters[c.state.tab]||{}),state:event.target.value,page:0};c.render();});
  document.querySelectorAll('[data-workflow-scan]').forEach(form=>form.addEventListener('submit',async e=>{e.preventDefault();const input=form.elements.scan,scan=input.value,button=form.querySelector('button');input.disabled=true;button.disabled=true;try{await call('/'+form.dataset.workflowScan+'/'+form.dataset.id+'/scan',{scan});c.toast('Scan accepté');await c.refresh();}catch(err){c.toast(err.message,true);button.disabled=false;input.disabled=false;input.select();}document.querySelector('#workflow-scan-input')?.focus();}));

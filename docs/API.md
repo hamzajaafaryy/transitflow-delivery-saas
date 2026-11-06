@@ -53,7 +53,7 @@ Une seule agence par ville normalisée (casse, espaces et accents). Exemple : Ta
 | POST | `/shipments/:id/notes` | Remarque opérations/admin |
 | POST | `/shipments/assign` | `{shipmentId,driverId?}` ; aucune progression automatique de statut |
 | POST | `/shipments/:id/status` | Annulation seulement ; mouvements physiques par les workflows dédiés |
-| GET | `/shipments/:id/ticket` | HTML privé 100 × 150 mm, Code128 et QR |
+| GET | `/shipments/:id/ticket` | HTML privé 100 × 100 mm, Code128 et QR |
 | GET | `/shipments/:id/preparation` | Opérations/admin : bon stock avec SKU/quantités/emplacements, ou bon livraison externe |
 | GET | `/operations/queue` | Préparation et colis ramassés, maximum 1000 ; scan direct disponible au-delà |
 | POST | `/operations/ramassage` | `{scan:"tracking ou UUID ou URL QR"}` ; réception et sortie FIFO atomiques pour STOCK |
@@ -243,3 +243,40 @@ Les `requestId` ont 12–80 caractères alphanumériques, `_` ou `-` (UUID conse
 Un lot de quarantaine ne fait pas partie de `unitsAvailable` ou `unitsPhysical` conformes. Le portail fournit `unitsQuarantined` séparément. La levée crée un nouveau lot conforme ; la remise ou l’écart retire seulement du solde isolé. Le journal refuse UPDATE/DELETE ; les corrections sont de nouveaux mouvements. La migration conserve les identifiants produit/lot/allocation et ajoute une entrée OPENING par ancien lot, explicitement sans historique reconstruit.
 
 Une attribution initiale de stock auparavant sans propriétaire produit deux mouvements compensés OWNER_TRANSFER_OUT/IN : le stock sort du périmètre non attribué et entre dans celui du marchand. Aucun déplacement ni ajout physique ; le total société reste inchangé et le marchand reçoit un solde initial explicite. Une répétition de la même attribution ne le recrédite pas.
+
+
+## Tickets 100 × 100 mm et positions physiques — v0.9
+
+Toutes ces routes exigent une session et restent limitées à la société, au marchand ou à l’agence du compte. Les POST utilisent les protections anti-CSRF habituelles.
+
+| Méthode / route | Action |
+| --- | --- |
+| `GET /api/labels?source=EXTERNAL&merchantId=UUID` | Commandes ramassage du marchand, 1 000 lignes maximum, total fourni. Source `STOCK` pour les tickets warehouse. Le compte marchand est toujours limité à son propriétaire. |
+| `POST /api/labels` | `{shipmentIds:[UUID,…]}` : préparer de 1 à 1 000 tickets du même marchand et de la même source. Réponse : `id`, `count`, `source`, `printUrl`. Les nouvelles commandes deviennent `AWAITING_PICKUP`. |
+| `GET /api/labels/:id/print` | Imprimer le lot sur pages 100 × 100 mm ; consultation privée, sans mutation. |
+| `POST /api/workflow/routes/:id/scan` | `{scan:tracking}` : remise individuelle au livreur d’une tournée DRAFT, statut `OUT_FOR_DELIVERY`. Un doublon ne produit pas de nouvel événement. |
+| `GET /api/workflow/agency-parcels` | Villes, comptes et liste des colis physiquement détenus par une agence ou ses livreurs. |
+| `GET /api/workflow/return-containers` | `cities`, `outstanding`, `containers`, `total`, `limit`. Inclut les retours non encore reçus à l’origine, même déjà expédiés. |
+| `POST /api/workflow/return-containers` | `{agencyId, shipmentIds?:[]}` : ouvrir un retour de ville. Sans liste, les colis sont ajoutés au scan ; avec liste, chaque attendu doit être scanné. |
+| `GET /api/workflow/return-containers/:id` | `container`, `items`, `summary:{expected,scanned,received,missing,notReceived}`. |
+| `POST /api/workflow/return-containers/:id/scan` | `{scan}` : scanner un refusé, annulé, injoignable, endommagé ou retour autorisé physiquement présent dans la ville. Crée/lie le dossier retour et donne `RETURNING`. |
+| `POST /api/workflow/return-containers/:id/close` | Container non vide, complet et contrôlé. |
+| `POST /api/workflow/return-containers/:id/ship` | `{proofReference}` : transport vers l’agence d’origine, état `SHIPPED`. |
+| `POST /api/workflow/return-containers/:id/receive-scan` | `{scan, condition, note?, location?}` : réception centrale. `condition` : `SEALED`, `GOOD`, `DAMAGED`, `INCOMPLETE`. Note de 5 caractères minimum pour dommage/manque. |
+| `POST /api/workflow/return-containers/:id/cancel` | `{reason}` : annuler avant départ, libérer les colis et restaurer leurs statuts précédents. |
+| `GET /api/workflow/return-containers/:id/print` | Bon de retour ville avec scans et réceptions/manquants. |
+| `GET /api/workflow/merchant-returns` | Retours reçus en attente de contrôle/remise et historique des bons du marchand. |
+| `POST /api/workflow/merchant-returns` | `{merchantId, shipmentIds?:[]}` : ouvrir un bon de remise marchand. |
+| `GET /api/workflow/merchant-returns/:id` | Bon, destinataire, preuve, contenu et nombre de scans. |
+| `POST /api/workflow/merchant-returns/:id/scan` | `{scan}` : ajouter/confirmer un colis reçu et contrôlé à remettre à ce propriétaire. |
+| `POST /api/workflow/merchant-returns/:id/complete` | `{receiverName, proofReference}` : tous les attendus doivent être scannés ; confirmer la remise physique et clôturer les dossiers. |
+| `POST /api/workflow/merchant-returns/:id/cancel` | `{reason}` : libérer le contenu d’un bon non remis. |
+| `GET /api/workflow/merchant-returns/:id/print` | Bon de remise avec réceptionnaire et preuve. |
+
+Le scan d’un colis sortant dans `/api/dispatches/:id/scan` donne désormais `IN_TRANSIT` immédiatement ; le départ physique reste confirmé par `/ship` et exigé pour les événements partenaires. Annuler un départ non effectué restaure `PICKED_UP`. L’API agence ne peut pas confirmer la réception centrale d’un retour.
+
+Les champs `custody_type`, `custody_agency_id`, `custody_updated_at`, `last_scanned_at`, `last_scanned_by` et `labels_printed_at` sont ajoutés aux colis. `custody_type` distingue marchand, warehouse, ramasseur, envoi, agence, livreur, transport retour et destinataire. Le dernier scan n’est pas supprimé par un simple changement de statut.
+
+La réception conforme d’un container inclut l’inspection et la décision selon la source : `STOCK` → remise FIFO au stock du même marchand et clôture du retour ; `EXTERNAL` → décision `RETURN_MERCHANT`, attente de remise, sans stock. Un doublon de réception est sans effet, même après réception complète du container. Les écarts physiques restent `RECEIVED` pour inspection manuelle. Les retours après livraison/échanges utilisent leur parcours dédié.
+
+Les routes de réception/remise sont réservées à l’agence d’origine. Un responsable agence ne peut ni réceptionner un container retour au nom du warehouse ni finaliser une remise marchand. Le marchand peut lire ses bons et leurs impressions, sans déclencher les opérations physiques.

@@ -31,7 +31,7 @@ export async function warehouseRoute(ctx){
   if(method==='POST'&&pick[2]==='scan'){
    const data=await json(ctx.req),key=requestKey(data.requestId),hash=requestHash(data),previous=stmt('SELECT * FROM picking_scans WHERE company_id=? AND request_id=?',companyId,key);
    if(previous){if(previous.shipment_id!==d.shipment.id||previous.actor_id!==user.id||previous.request_hash!==hash)throw fail(409,'Identifiant de scan déjà utilisé avec un autre contenu');return send(res,200,{...d,duplicate:true});}
-   if(d.shipment.ramassed_at||!['CREATED','ASSIGNED_AGENCY','EXPORTED'].includes(d.shipment.status))throw fail(409,'Préparation déjà sortie ou commande clôturée');
+   if(d.shipment.ramassed_at||!['CREATED','AWAITING_PICKUP','ASSIGNED_AGENCY','EXPORTED'].includes(d.shipment.status))throw fail(409,'Préparation déjà sortie ou commande clôturée');
    if(d.shipment.hold_reason)throw fail(409,'Préparation bloquée : '+d.shipment.hold_reason);
    const value=clean(data.productScan,100),qty=integer(data.quantity??1,1,100000),matches=d.items.filter(p=>[p.product_id,p.sku,p.barcode].filter(Boolean).some(x=>x.toUpperCase()===value.toUpperCase()));
    if(matches.length!==1)throw fail(409,matches.length?'Code produit ambigu : utilisez son ID':'Produit absent de cette commande');const p=matches[0];if(p.scanned+qty>p.expected)throw fail(409,'Quantité scannée supérieure au bon stock');

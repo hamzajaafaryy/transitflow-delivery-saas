@@ -32,6 +32,7 @@ test('driver and merchant permissions; private labels and redacted public tracki
   assert.equal((await t.request(`/api/shipments/${a.value.id}/status`,{method:'POST',as:'driver',data:{status:'OUT_FOR_DELIVERY'}})).status,409);
   await t.pickup(a.value.tracking);
   const tour=await t.request('/api/workflow/routes',{method:'POST',data:{agencyId:t.agencies.Casablanca.id,driverId:driver.value.id,shipmentIds:[a.value.id]}});assert.equal(tour.status,201,JSON.stringify(tour.value));
+  assert.equal((await t.request('/api/workflow/routes/'+tour.value.id+'/scan',{method:'POST',as:'driver',data:{scan:a.value.tracking}})).status,200);
   assert.equal((await t.request('/api/workflow/routes/'+tour.value.id+'/start',{method:'POST',as:'driver',data:{}})).status,200);
   assert.equal((await t.request('/api/workflow/shipments/'+a.value.id+'/attempts',{method:'POST',as:'driver',data:{result:'DELIVERED',receiverName:'Client',collectedAmount:200}})).status,201);
   assert.equal((await t.request(`/api/shipments/${b.value.id}/status`,{method:'POST',as:'driver',data:{status:'DELIVERED'}})).status,403);
@@ -89,7 +90,7 @@ test('external/stock preparation, FIFO pickup scans, wrong-city/duplicate/missin
   assert.equal((await scan(stock.value.id)).value.summary.missing,0);
   assert.equal((await t.request(route+'/close',{method:'POST',data:{}})).status,200);
   const exported=await t.request(route+'/export',{method:'POST',data:{}});assert.equal(exported.status,200);const rows=xlsx('import',exported.value);assert.equal(rows.length,3);assert.ok(rows.slice(1).every(row=>row[4]==='Tanger'));
-  assert.equal(t.db.prepare('SELECT status FROM shipments WHERE id=?').get(stock.value.id).status,'PICKED_UP');
+  assert.equal(t.db.prepare('SELECT status FROM shipments WHERE id=?').get(stock.value.id).status,'IN_TRANSIT');
   assert.equal((await t.request(route+'/ship',{method:'POST',data:{}})).status,200);assert.equal((await t.request(route+'/ship',{method:'POST',data:{}})).status,409);
   assert.equal(t.db.prepare('SELECT status FROM shipments WHERE id=?').get(stock.value.id).status,'IN_TRANSIT');assert.equal((await scan(stock.value.tracking)).status,409);
  }finally{await t.stop();}

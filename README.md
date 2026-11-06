@@ -1,10 +1,23 @@
 # TransitFlow — exploitation d’une société de livraison au Maroc
 
-Version 0.8 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
+Version 0.9 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
+
+## Tickets, scans et retours par ville v0.9
+
+- **Tickets · ramassage** : colis externes du marchand, sans prélèvement warehouse. **Tickets · stock** : commandes préparées depuis ses produits. Chaque lot contient un seul marchand et une seule source ; un ticket Code128/QR par page **100 × 100 mm**. Sélection, impression groupée et réimpression sont disponibles dans les comptes marchands et à l’exploitation.
+- La préparation d’un lot est une action enregistrée : les nouvelles commandes passent de « À imprimer » à **En attente de ramassage**. Ouvrir un aperçu en GET ne change rien. Une réimpression ne remet jamais un colis en arrière. La confirmation de l’imprimante physique reste celle de l’opérateur.
+- Scan ramassage / préparation → **Ramassé** ; scan dans le bon d’envoi de la ville → **Envoi expédié** ; scan arrivée → **Reçu par ville** ; scan individuel de remise au livreur → **Mise en distribution**. La fermeture et le départ physique des containers restent enregistrés séparément. Une tournée ne démarre qu’après scan de tous ses colis.
+- **Colis par agence** affiche les colis physiquement à l’agence ou avec ses livreurs, à partir de leur dernière position. Une affectation commerciale à Tanger ne suffit pas à prétendre que le colis y est arrivé.
+- **Retours par ville** suit refusés, annulés et autres retours autorisés jusqu’à leur arrivée à l’origine. Ouvrir un container, scanner les colis de cette ville, fermer, puis confirmer le départ avec référence de transport. Une liste attendue peut être fournie par API ; les manquants bloquent la fermeture. Un container vide peut être rempli progressivement au scan. Deux containers ne peuvent pas retenir le même colis.
+- À l’origine, scanner chaque colis attendu et indiquer son état physique. Un retour stock conforme est contrôlé et réintégré au stock du marchand propriétaire dans la même transaction, une seule fois. Un retour externe conforme entre dans **Retours aux marchands**, sans créer de SKU ou de stock. Un colis endommagé ou incomplet reste en contrôle sans ajouter de stock disponible.
+- **Retours aux marchands** : ouvrir le bon du propriétaire, scanner les retours à lui remettre, puis confirmer le nom du réceptionnaire et la preuve de remise. Le statut devient **Retourné au marchand**. Le marchand consulte ses bons et leurs preuves ; il ne valide pas lui-même une remise effectuée par le warehouse.
+- Une annulation avant collecte libère les réservations. Une annulation après collecte conserve la position physique et les sorties de stock : elle doit suivre le parcours retour. Une réception partielle de 49 colis sur 50 laisse le cinquantième dans les retours non reçus.
+
+Le scan de réception d’un container inclut le contrôle de conformité déclaré par l’opérateur. La réception isolée d’un dossier retour historique reste distincte de son inspection. Les retours après livraison et les échanges conservent leur dossier, sans modifier rétroactivement la livraison ou le COD.
 
 ## Périmètre livré
 
-- Commandes externes et commandes stock marchand, réservation FIFO atomique, contrôle SKU/code-barres et quantités avant sortie, bons de préparation et tickets privés Code128/QR.
+- Commandes externes et commandes stock marchand, réservation FIFO atomique, contrôle SKU/code-barres et quantités avant sortie, bons de préparation et tickets privés 100 × 100 mm Code128/QR.
 - Catalogue par marchand, bons de réapprovisionnement par dépôt ou collecte, ramasseur/véhicule, réceptions partielles, cartons, unités conformes/endommagées, écarts et justificatifs.
 - Quarantaine séparée du disponible, traitement approuvé avec preuve, inventaires physiques soumis puis validés, mouvements de stock conservés et soldes de migration identifiés.
 - Demandes de ramassage par boutique/fournisseur, point et rendez-vous ; ramasseur et véhicule personnel ou société ; collecte au scan, manquants et réception warehouse distincte.
@@ -58,10 +71,10 @@ Le serveur filtre aussi les documents et pièces jointes. Ramasseur et livreur s
 1. Le marchand crée EXTERNAL ou STOCK. Les produits appartiennent à son magasin et sont réservés en FIFO ; une rupture annule toute la transaction.
 2. Le dispatcher affecte ramasseur et véhicule à une demande. Le scan chez le marchand donne COLLECTED. Les absents sont motivés et libérés pour une nouvelle demande.
 3. Le magasinier imprime bon et ticket, contrôle chaque SKU/code-barres et sa quantité pour STOCK, puis scanne le tracking : PICKED_UP. Les réservations sortent physiquement une seule fois. Un dépôt direct reste possible hors demande active.
-4. Chaque colis attendu est scanné dans le container de sa ville avant fermeture. Excel et départ sont séparés. Le départ donne IN_TRANSIT.
-5. L’agence réceptionne au scan (AT_AGENCY), prépare une tournée et confirme le départ (OUT_FOR_DELIVERY). Chaque arrêt a un résultat avant clôture.
+4. Chaque colis attendu est scanné dans le container de sa ville avant fermeture. Le scan donne IN_TRANSIT. Excel, fermeture et départ physique restent séparés.
+5. L’agence réceptionne au scan (AT_AGENCY), prépare une tournée, scanne chaque remise au livreur (OUT_FOR_DELIVERY), puis confirme le départ. Chaque arrêt a un résultat avant clôture.
 6. Livrer exige réceptionnaire et COD exact. Un report exige une date future, un échec un motif. Déroger à un report/limite d’essais exige un motif responsable audité.
-7. Le retour suit son propre dossier. La réception seule n’ajoute jamais de stock vendable. L’inspection autorise stock conforme, remise au marchand ou nouveau tracking lié à l’ancien.
+7. Le retour suit son propre dossier. La réception isolée n’ajoute jamais de stock vendable ; le scan de réception d’un container inclut le contrôle et sa décision. L’inspection autorise stock conforme, remise au marchand ou nouveau tracking lié à l’ancien.
 
 Douchette clavier avec Entrée, saisie tracking/UUID et URL QR sont acceptées. Pas de scan caméra ni de mode hors ligne.
 
@@ -110,7 +123,7 @@ Recharger ensuite l’application. Modifier le fichier .env ou un export dans un
 npm run check
 ```
 
-La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, scan produits, collecte de réapprovisionnement, réception avec écarts, inventaire validé, quarantaine, journal stock, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
+La CI exécute aussi `npm run test:browser` : formulaires réels des deux sources, voiture personnelle, scan produits, collecte de réapprovisionnement, réception avec écarts, inventaire validé, quarantaine, journal stock, container/XLSX, agence, livraison/refus, retour/inspection, caisse et support. Elle contrôle SQLite et les espaces des onze rôles. Un second parcours vérifie les tickets 100 × 100 mm (PDF à deux pages), les retours ville, la réintégration stock, la remise marchand et les écrans mobiles. Captures desktop/mobile et résultats : artefact browser-evidence. Playwright est installé uniquement pour la CI, hors application.
 
 ## Architecture et migration
 
@@ -119,6 +132,8 @@ La CI exécute aussi `npm run test:browser` : formulaires réels des deux source
 | server.mjs, auth.mjs, access.mjs | HTTP, comptes, sessions révocables et permissions |
 | db.mjs, workflow-db.mjs | Schéma, migration transactionnelle et contrôle FK |
 | logistics.mjs | Agences, FIFO, préparation, containers et XLSX |
+| labels.mjs, ticket.mjs | Lots de tickets 100 × 100 mm par marchand et source |
+| custody.mjs, network-schema.mjs, return-network.mjs | Dernière position, retours ville, réceptions et remises marchands |
 | pickups.mjs, delivery.mjs | Collectes, véhicules, arrivées, tournées et tentatives |
 | returns.mjs, claims.mjs | Retours, inspection, échanges et service client |
 | cash.mjs, merchant-portal.mjs | Remises, tarifs, relevés et ajustements |

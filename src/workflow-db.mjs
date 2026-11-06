@@ -1,4 +1,5 @@
 import {warehouseSchema} from './warehouse-schema.mjs';
+import {networkSchema} from './network-schema.mjs';
 import {ROLES} from './access.mjs';
 const add=(db,table,name,type)=>{if(!db.prepare(`PRAGMA table_info(${table})`).all().some(x=>x.name===name))db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);};
 export function workflowSchema(db){
@@ -53,4 +54,5 @@ export function workflowSchema(db){
  db.exec(`CREATE TABLE IF NOT EXISTS statement_adjustment_lines(company_id TEXT NOT NULL,statement_id TEXT NOT NULL REFERENCES merchant_statements(id),adjustment_id TEXT NOT NULL REFERENCES merchant_adjustments(id),amount_centimes INTEGER NOT NULL,note TEXT NOT NULL,PRIMARY KEY(statement_id,adjustment_id),UNIQUE(company_id,adjustment_id));
  CREATE TABLE IF NOT EXISTS statement_carry_lines(company_id TEXT NOT NULL,statement_id TEXT NOT NULL REFERENCES merchant_statements(id),previous_statement_id TEXT NOT NULL REFERENCES merchant_statements(id),amount_centimes INTEGER NOT NULL,PRIMARY KEY(statement_id,previous_statement_id),UNIQUE(company_id,previous_statement_id));`);
  warehouseSchema(db);
+ networkSchema(db);
 }

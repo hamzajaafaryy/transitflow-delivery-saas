@@ -1,12 +1,14 @@
-export const STATUSES = ['CREATED','COLLECTED','AT_AGENCY','UNREACHABLE','LOST','DAMAGED','ASSIGNED_AGENCY','EXPORTED','HANDED_OVER','PICKED_UP','IN_TRANSIT','OUT_FOR_DELIVERY','POSTPONED','DELIVERED','REFUSED','RETURNING','RETURNED','CANCELLED'];
+export const STATUSES = ['CREATED','AWAITING_PICKUP','RETURNED_MERCHANT','COLLECTED','AT_AGENCY','UNREACHABLE','LOST','DAMAGED','ASSIGNED_AGENCY','EXPORTED','HANDED_OVER','PICKED_UP','IN_TRANSIT','OUT_FOR_DELIVERY','POSTPONED','DELIVERED','REFUSED','RETURNING','RETURNED','CANCELLED'];
 export const STATUS_LABELS = {
- COLLECTED:'Collecté chez le marchand', AT_AGENCY:'Reçu en agence', UNREACHABLE:'Injoignable', LOST:'Perdu', DAMAGED:'Endommagé', CREATED:'À ramasser', ASSIGNED_AGENCY:'Affecté à l’agence', EXPORTED:'Exporté (historique)',
+ AWAITING_PICKUP:'En attente de ramassage', RETURNED_MERCHANT:'Retourné au marchand', COLLECTED:'Collecté chez le marchand', AT_AGENCY:'Reçu par ville', UNREACHABLE:'Injoignable', LOST:'Perdu', DAMAGED:'Endommagé', CREATED:'À imprimer', ASSIGNED_AGENCY:'Affecté à l’agence', EXPORTED:'Exporté (historique)',
  HANDED_OVER:'Remis à l’agence', PICKED_UP:'Ramassé', IN_TRANSIT:'Envoi expédié',
- OUT_FOR_DELIVERY:'En livraison', POSTPONED:'Reporté', DELIVERED:'Livré',
- REFUSED:'Refusé', RETURNING:'En retour', RETURNED:'Retourné', CANCELLED:'Annulé'
+ OUT_FOR_DELIVERY:'Mise en distribution', POSTPONED:'Reporté', DELIVERED:'Livré',
+ REFUSED:'Refusé', RETURNING:'En retour', RETURNED:'Reçu par agence d’origine', CANCELLED:'Annulé'
 };
 const transitions = {
- CREATED:['ASSIGNED_AGENCY','COLLECTED','PICKED_UP','CANCELLED'],
+ AWAITING_PICKUP:['COLLECTED','PICKED_UP','CANCELLED'],
+ RETURNED_MERCHANT:[],
+ CREATED:['AWAITING_PICKUP','ASSIGNED_AGENCY','COLLECTED','PICKED_UP','CANCELLED'],
  COLLECTED:['PICKED_UP','RETURNING'],
  AT_AGENCY:['OUT_FOR_DELIVERY','POSTPONED','RETURNING'],
  UNREACHABLE:['OUT_FOR_DELIVERY','POSTPONED','RETURNING'],
@@ -21,12 +23,12 @@ const transitions = {
  REFUSED:['RETURNING'], RETURNING:['RETURNED'],
  DELIVERED:[],RETURNED:[],CANCELLED:[]
 };
-export function canTransition(from,to){return from===to || (transitions[from]||[]).includes(to);}
+export function canTransition(from,to){return from===to || (to==='CANCELLED'&&['COLLECTED','PICKED_UP','IN_TRANSIT','AT_AGENCY','OUT_FOR_DELIVERY','POSTPONED','UNREACHABLE','REFUSED'].includes(from)) || (transitions[from]||[]).includes(to);}
 // External systems frequently omit intermediate milestones. Accept forward jumps
 // while rejecting impossible terminal reversals and stale backwards updates.
 export function canAgencyTransition(from,to){
  if(from===to)return true;
- if(['DELIVERED','RETURNED','CANCELLED','LOST','DAMAGED'].includes(from))return false;
+ if(['DELIVERED','RETURNED','RETURNED_MERCHANT','CANCELLED','LOST','DAMAGED'].includes(from))return false;
  if(to==='DELIVERED')return !['REFUSED','RETURNING'].includes(from);
  if(to==='REFUSED')return ['ASSIGNED_AGENCY','EXPORTED','HANDED_OVER','PICKED_UP','IN_TRANSIT','OUT_FOR_DELIVERY','AT_AGENCY','UNREACHABLE','POSTPONED'].includes(from);
  if(to==='RETURNING')return ['HANDED_OVER','PICKED_UP','IN_TRANSIT','OUT_FOR_DELIVERY','AT_AGENCY','UNREACHABLE','POSTPONED','REFUSED'].includes(from);
@@ -40,9 +42,9 @@ export function canAgencyTransition(from,to){
 }
 export function mapAgencyStatus(raw,custom={}){
  const normalized=String(raw||'').trim().toUpperCase().replace(/[\s-]+/g,'_');
- const mappings={ATTEND_DE_RAMASSAGE:'ASSIGNED_AGENCY',EN_ATTENTE_DE_RAMASSAGE:'ASSIGNED_AGENCY',
+ const mappings={ATTEND_DE_RAMASSAGE:'AWAITING_PICKUP',EN_ATTENTE_DE_RAMASSAGE:'AWAITING_PICKUP',
   RAMASSE:'PICKED_UP',RAMASSÉ:'PICKED_UP',PICKED:'PICKED_UP',EN_COURS:'IN_TRANSIT',
-  RECU_AGENCE:'AT_AGENCY',INJOIGNABLE:'UNREACHABLE',EN_LIVRAISON:'OUT_FOR_DELIVERY',LIVRE:'DELIVERED',LIVRÉ:'DELIVERED',
+  EXPEDIE:'IN_TRANSIT',EXPÉDIÉ:'IN_TRANSIT',RECU_PAR_VILLE:'AT_AGENCY',REÇU_PAR_VILLE:'AT_AGENCY',MISE_EN_DISTRIBUTION:'OUT_FOR_DELIVERY',SORTIE_POUR_LA_LIVRAISON:'OUT_FOR_DELIVERY',RECU_AGENCE:'AT_AGENCY',INJOIGNABLE:'UNREACHABLE',EN_LIVRAISON:'OUT_FOR_DELIVERY',LIVRE:'DELIVERED',LIVRÉ:'DELIVERED',
   REFUSE:'REFUSED',REFUSÉ:'REFUSED',RETOUR:'RETURNING',RETOURNE:'RETURNED',
   REPORTÉ:'POSTPONED',REPORTE:'POSTPONED'};
  const result=custom[normalized]||mappings[normalized]||normalized;

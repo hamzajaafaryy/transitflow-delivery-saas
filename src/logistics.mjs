@@ -1,3 +1,4 @@
+import {setCustody} from './custody.mjs';
 import {stockMovement} from './stock-ledger.mjs';
 import {pickingDetail} from './warehouse.mjs';
 import { randomBytes } from 'node:crypto';
@@ -56,7 +57,7 @@ function containerDetail(ctx,dispatchId){const dispatch=container(ctx,dispatchId
 function validateContents(dispatch,items){
  if(!items.length)throw bad(409,'Container vide');
  if(items.some(s=>!s.scanned_at))throw bad(409,'Container incomplet : des colis attendus ne sont pas scannés');
- if(items.some(s=>cityKey(s.city)!==dispatch.city_key||s.agency_id!==dispatch.agency_id||s.status!=='PICKED_UP'||!s.ramassed_at))throw bad(409,'Le contenu du container a changé : vérifiez les colis');
+ if(items.some(s=>cityKey(s.city)!==dispatch.city_key||s.agency_id!==dispatch.agency_id||!['PICKED_UP','IN_TRANSIT'].includes(s.status)||!s.ramassed_at))throw bad(409,'Le contenu du container a changé : vérifiez les colis');
 }
 function event(ctx,shipment,status,note,source='WAREHOUSE'){
  const t=now();ctx.run('UPDATE shipments SET status=?,updated_at=? WHERE id=? AND company_id=?',status,t,shipment.id,ctx.companyId);
@@ -103,7 +104,7 @@ export async function logisticsRoute(ctx){
     (SELECT i.dispatch_id FROM dispatch_items i WHERE i.company_id=s.company_id AND i.shipment_id=s.id) AS dispatch_id,
     (SELECT COUNT(*) FROM stock_allocations x WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.state='RESERVED') AS stock_lines
     FROM shipments s LEFT JOIN merchants m ON m.id=s.merchant_id AND m.company_id=s.company_id LEFT JOIN agencies a ON a.id=s.agency_id AND a.company_id=s.company_id
-    WHERE s.company_id=? AND s.status IN ('CREATED','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP') ORDER BY s.created_at LIMIT 1000`,companyId);
+    WHERE s.company_id=? AND s.status IN ('CREATED','AWAITING_PICKUP','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP') ORDER BY s.created_at LIMIT 1000`,companyId);
   return send(res,200,{shipments:rows,limit:1000});
  }
  if(method==='POST'&&path==='/api/operations/ramassage'){
@@ -112,7 +113,7 @@ export async function logisticsRoute(ctx){
   const result=tx(()=>{
    const s=scannedShipment(ctx,data.scan);
    if(s.status==='PICKED_UP'&&s.ramassed_at&&!stmt("SELECT 1 FROM stock_allocations WHERE shipment_id=? AND company_id=? AND state='RESERVED'",s.id,companyId))return {ok:true,duplicate:true,tracking:s.tracking,status:s.status};
-   if(!['CREATED','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(s.status))throw bad(409,'Ce colis ne peut plus être ramassé');
+   if(!['CREATED','AWAITING_PICKUP','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(s.status))throw bad(409,'Ce colis ne peut plus être ramassé');
    const agency=stmt('SELECT * FROM agencies WHERE company_id=? AND id=?',companyId,s.agency_id);
    if(!agency||cityKey(s.city)!==agency.city_key)throw bad(409,'Affectez le colis à l’agence de sa ville avant le ramassage');
    if(s.hold_reason)throw bad(409,'Préparation bloquée : '+s.hold_reason);
@@ -123,7 +124,7 @@ export async function logisticsRoute(ctx){
    if(s.order_source==='EXTERNAL'&&allocations.length)throw bad(409,'Source du colis incohérente avec le stock');
    for(const a of allocations){run('UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-?,quantity_reserved=quantity_reserved-? WHERE id=? AND company_id=?',a.quantity,a.quantity,a.lot_id,companyId);run("UPDATE stock_allocations SET state='DISPATCHED' WHERE id=? AND company_id=?",a.id,companyId);stockMovement(ctx,{productId:a.product_id,lotId:a.lot_id,kind:'DISPATCH',physical:-a.quantity,reserved:-a.quantity,entityType:'shipment',entityId:s.id,eventKey:'DISPATCH:'+a.id});}
    run('UPDATE shipments SET ramassed_at=? WHERE id=? AND company_id=?',now(),s.id,companyId);event(ctx,s,'PICKED_UP','Scan ramassage — '+(s.order_source==='STOCK'?'préparation stock confirmée':'colis externe réceptionné'));
-   pickupReceived(ctx,s);
+   setCustody(ctx,s,'WAREHOUSE',{scan:true});pickupReceived(ctx,s);
    audit(companyId,user.id,'RAMASSAGE_SCANNED','shipment',s.id,{source:s.order_source,stockAllocations:allocations.length});
    return {ok:true,tracking:s.tracking,status:'PICKED_UP',source:s.order_source,city:s.city};
   });return send(res,200,result);
@@ -165,12 +166,13 @@ export async function logisticsRoute(ctx){
     const current=container(ctx,dispatchId);if(current.state!=='OPEN')throw bad(409,'Ce container n’est plus ouvert');
     const s=scannedShipment(ctx,data.scan);
     if(cityKey(s.city)!==current.city_key||s.agency_id!==current.agency_id)throw bad(409,`Mauvaise ville : colis pour ${s.city}, container ${current.city}`);
-    if(s.status!=='PICKED_UP'||!s.ramassed_at)throw bad(409,'Scannez d’abord le ramassage de ce colis');
+    if(!['PICKED_UP','IN_TRANSIT'].includes(s.status)||!s.ramassed_at)throw bad(409,'Scannez d’abord le ramassage de ce colis');
     const item=stmt('SELECT * FROM dispatch_items WHERE company_id=? AND shipment_id=?',companyId,s.id);
     if(!item)throw bad(409,'Colis non attendu dans ce bon d’envoi ; il a été ramassé après l’ouverture ou appartient à un autre lot');
     if(item.dispatch_id!==dispatchId)throw bad(409,'Colis déjà affecté à un autre container');
     if(item.scanned_at)throw bad(409,'Colis déjà scanné dans ce container');
     run('UPDATE dispatch_items SET scanned_at=?,scanned_by=? WHERE dispatch_id=? AND shipment_id=? AND company_id=?',now(),user.id,dispatchId,s.id,companyId);
+    event(ctx,s,'IN_TRANSIT',current.reference+' — scanné dans le bon d’envoi vers '+current.city,'DISPATCH');setCustody(ctx,s,'OUTBOUND',{agencyId:current.agency_id,scan:true});
     audit(companyId,user.id,'CONTAINER_PARCEL_SCANNED','dispatch',dispatchId,{shipmentId:s.id,tracking:s.tracking});return {...containerDetail(ctx,dispatchId),acceptedTracking:s.tracking};
    });return send(res,200,result);
   }
@@ -179,7 +181,7 @@ export async function logisticsRoute(ctx){
   }
   if(method==='POST'&&action==='cancel'){
    const data=await json(req),reason=clean(data.reason,200);if(reason.length<5)throw bad(400,'Motif d’annulation requis');
-   tx(()=>{const current=container(ctx,dispatchId);if(!['OPEN','CLOSED'].includes(current.state))throw bad(409,'Container déjà expédié ou annulé');run('DELETE FROM dispatch_items WHERE dispatch_id=? AND company_id=?',dispatchId,companyId);run("UPDATE dispatches SET state='CANCELLED' WHERE id=? AND company_id=?",dispatchId,companyId);audit(companyId,user.id,'CONTAINER_CANCELLED','dispatch',dispatchId,{reason});});return send(res,200,{ok:true});
+   tx(()=>{const current=container(ctx,dispatchId);if(!['OPEN','CLOSED'].includes(current.state))throw bad(409,'Container déjà expédié ou annulé');for(const s of containerItems(ctx,dispatchId)){if(s.scanned_at&&s.status==='IN_TRANSIT'){event(ctx,s,'PICKED_UP','Envoi annulé — '+reason,'DISPATCH');setCustody(ctx,s,'WAREHOUSE');}}run('DELETE FROM dispatch_items WHERE dispatch_id=? AND company_id=?',dispatchId,companyId);run("UPDATE dispatches SET state='CANCELLED' WHERE id=? AND company_id=?",dispatchId,companyId);audit(companyId,user.id,'CONTAINER_CANCELLED','dispatch',dispatchId,{reason});});return send(res,200,{ok:true});
   }
   if(method==='POST'&&action==='ship'){
    await json(req);const result=tx(()=>{const current=container(ctx,dispatchId);if(current.state!=='CLOSED')throw bad(409,'Fermez le container complet avant de confirmer son départ');const items=containerItems(ctx,dispatchId);validateContents(current,items);
