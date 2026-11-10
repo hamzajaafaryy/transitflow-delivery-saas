@@ -39,11 +39,14 @@ export async function preview({test=false}={}) {
       if (attempt===99 || web.exitCode!==null) throw new Error('Next.js Preview ne répond pas.');
       await new Promise(resolve=>setTimeout(resolve,140));
     }
-    const profiles=Object.fromEntries(['staff','agency','merchant'].map(role=>[role,isolated.accounts[role]]));
+    const profiles=Object.fromEntries(['admin','staff','agency','merchant'].map(role=>[role,isolated.accounts[role]]));
     if (!test) {
       console.log('TransitFlow V2 — Preview de données fictives uniquement');
       console.log('URL : '+origin);
-      for(const profile of Object.values(profiles)) console.log(profile.login+'  '+profile.password);
+      for(const [role,profile] of Object.entries(profiles)) {
+        console.log(role.toUpperCase()+'  '+profile.login+'  '+profile.password);
+        if(role==='admin'&&profile.seed) console.log('ADMIN AUTHENTICATOR SETUP KEY  '+profile.seed);
+      }
       console.log('Code de retour à tester : '+scenario.returnCode);
     }
     return {origin,profiles,scenario,close};
