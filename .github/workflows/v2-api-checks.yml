@@ -1,0 +1,28 @@
+name: TransitFlow V2 API checks
+on:
+  push:
+    branches: [transitflow-v2-foundation]
+    paths:
+      - 'v2/api/**'
+      - '.github/workflows/v2-api-checks.yml'
+  pull_request:
+    paths:
+      - 'v2/api/**'
+      - '.github/workflows/v2-api-checks.yml'
+permissions:
+  contents: read
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: v2/api/package-lock.json
+      - run: npm install --no-audit --no-fund
+      - run: npm run check
