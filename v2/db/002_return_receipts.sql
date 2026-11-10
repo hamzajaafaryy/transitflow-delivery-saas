@@ -24,7 +24,7 @@ FOR EACH ROW EXECUTE FUNCTION v2_protect_bon_membership();
 
 CREATE OR REPLACE FUNCTION v2_receive_return(
  p_bon uuid, p_code text, p_actor uuid, p_method text,
- p_request_key text, p_manual_confirmed boolean DEFAULT false
+ p_request_key text, p_warehouse_id uuid, p_manual_confirmed boolean DEFAULT false
 ) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE b v2_return_bons%ROWTYPE;
         l v2_return_bon_lines%ROWTYPE;
@@ -33,6 +33,7 @@ DECLARE b v2_return_bons%ROWTYPE;
 BEGIN
   IF p_method NOT IN ('BARCODE','CAMERA','MANUAL') THEN RAISE EXCEPTION 'Invalid input method'; END IF;
   IF p_method='MANUAL' AND NOT p_manual_confirmed THEN RAISE EXCEPTION 'Manual confirmation required'; END IF;
+  IF p_warehouse_id IS NULL THEN RAISE EXCEPTION 'Warehouse holder ID required'; END IF;
   IF p_request_key IS NULL OR length(trim(p_request_key))=0 THEN RAISE EXCEPTION 'Idempotency key required'; END IF;
   -- All receipts for one tracking code serialize on its order row.
   SELECT * INTO o FROM v2_orders WHERE tracking_code=p_code FOR UPDATE;
@@ -63,10 +64,10 @@ BEGIN
   -- No direct DB execute grants to web or partner accounts.
   UPDATE v2_return_bons SET first_received_at=COALESCE(first_received_at,now()) WHERE id=p_bon;
   UPDATE v2_return_bon_lines SET received_at=now(),received_by=p_actor,input_method=p_method WHERE id=l.id;
-  UPDATE v2_orders SET current_holder_type='WAREHOUSE',current_holder_id=b.agency_id,holder_updated_at=now()
+  UPDATE v2_orders SET current_holder_type='WAREHOUSE',current_holder_id=p_warehouse_id,holder_updated_at=now()
    WHERE id=o.id;
   INSERT INTO v2_scan_events(order_id,bon_id,actor_id,method,from_holder_type,from_holder_id,to_holder_type,to_holder_id,request_key)
-   VALUES(o.id,p_bon,p_actor,p_method,o.current_holder_type,o.current_holder_id,'WAREHOUSE',b.agency_id,p_request_key);
+   VALUES(o.id,p_bon,p_actor,p_method,o.current_holder_type,o.current_holder_id,'WAREHOUSE',p_warehouse_id,p_request_key);
   UPDATE v2_return_bon_lines other
     SET superseded_at=now(),superseded_by=p_bon
     FROM v2_return_bons other_bon
@@ -80,5 +81,5 @@ BEGIN
 END $$;
 
 -- Deny direct mutation of audit history; provision a dedicated restricted application role.
--- A production migration must add RLS, precise grants and real warehouse holder IDs.
+-- A production migration must add RLS, precise grants and warehouse FK validation.
 COMMIT;
