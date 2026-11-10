@@ -37,9 +37,13 @@ test('encrypted pg_dump round trip, role isolation, authentication and retention
   target.pathname='/'+name;
   await assert.rejects(restoreBackup({archive,connection:target.href,key:randomBytes(32)}));
   const {migrations}=await fixtureDb.query('SELECT count(*)::int AS migrations FROM v2_schema_migrations');
-  assert.deepEqual(await restoreBackup({archive,connection:target.href,key}),{migrations,orders:1});
   const restored=database(target.href);
   try {
+    await restored.query("CREATE FUNCTION public.fixture_function() RETURNS int LANGUAGE sql AS 'SELECT 1'");
+    await assert.rejects(restoreBackup({archive,connection:target.href,key}),/already contains/);
+    assert.equal((await restored.query('SELECT public.fixture_function() AS result')).rows[0].result,1);
+    await restored.query('DROP FUNCTION public.fixture_function()');
+    assert.deepEqual(await restoreBackup({archive,connection:target.href,key}),{migrations,orders:1});
     assert.equal((await restored.query('SELECT cod_centimes FROM v2_orders WHERE tracking_code=$1',[marker])).rows[0].cod_centimes,'12345');
     assert.deepEqual((await restored.query(`SELECT has_table_privilege('transitflow_v2_runtime','v2_orders','SELECT') AS can_read,
       has_column_privilege('transitflow_v2_runtime','v2_return_bon_lines','received_at','UPDATE') AS can_modify_evidence`)).rows[0],{can_read:true,can_modify_evidence:false});

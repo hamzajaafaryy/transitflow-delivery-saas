@@ -127,7 +127,10 @@ export async function restoreBackup({archive,connection,key}) {
     await verifyAndDecrypt(archive,path,key);
     client=await pool.connect();
     await client.query("SELECT pg_advisory_lock(hashtextextended('transitflow-v2-backup-restore',0))");
-    const existing=(await client.query("SELECT EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')) AS occupied")).rows[0];
+    const existing=(await client.query(`SELECT EXISTS(
+      SELECT FROM pg_depend d JOIN pg_namespace n ON n.oid=d.refobjid
+      WHERE d.refclassid='pg_namespace'::regclass AND n.nspname='public'
+    ) AS occupied`)).rows[0];
     if (existing.occupied) throw new Error('Restore target already contains application objects.');
     // A schema-scoped archive includes CREATE SCHEMA public. The guarded empty target
     // starts with PostgreSQL's default public schema, so let pg_restore recreate it.
