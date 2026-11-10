@@ -52,3 +52,7 @@ p95 scan confirmation <=300ms; p95 simple API <=200ms; representative dashboard 
 - Duplicate delivered webhooks never double-credit COD.
 - Return to warehouse never restocks twice.
 - Non-finance users cannot mark agency payments Paid.
+
+## Branch implementation notes
+
+The runtime now uses the existing Nest/Fastify API and a separate Next.js app in `v2/web`. Apply the ordered V2 migrations with a migration owner and connect the API using a restricted login. The API rechecks current account membership and permissions for every authenticated request. For development and review, the isolated preview runner uses local PostgreSQL and synthetic data with a private loopback API. Redis/BullMQ and managed backups remain deployment work. The [verification matrix](VERIFICATION.md) records tested scope, technical decisions, and gaps relative to the authoritative specification.

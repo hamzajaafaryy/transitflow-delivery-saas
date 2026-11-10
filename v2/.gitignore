@@ -1,0 +1,7 @@
+api/dist/
+web/.next/
+web/next-env.d.ts
+*.tsbuildinfo
+**/__pycache__/
+.env.*
+!.env.example
