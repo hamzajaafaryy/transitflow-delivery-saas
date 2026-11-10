@@ -1,11 +1,11 @@
 'use client';
 
-import { ArrowLeft, ClipboardCheck, LockKeyhole, MessageCircle, Plus, Send, Upload } from 'lucide-react';
+import { ArrowLeft, ClipboardCheck, LockKeyhole, MessageCircle, Plus, ScanBarcode, Send, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { ApiError, api, attachment, can, dateBoundary, display, fmt, href, normalizeCodes, short, when,
   type PageRows,type References,type Row,type User } from '../lib';
 import { Scanner } from './scanner';
-import { Busy, Download, Field, Info, Modal, Notice, Options, Pagination, Panel, RefOptions, Refresh, Status, Table,
+import { Busy, Download, Field, FilterGroup, Info, Modal, Notice, Options, Pagination, Panel, RefOptions, Refresh, Status, Table,
   submit, useAction, useResource, value } from './ui';
 
 interface ReturnDetails {
@@ -40,12 +40,13 @@ export function AgencyReturns({user,refs,initialId}:{user:User;refs:References;i
       actions={<><Refresh reload={rows.reload}/>{can(user,'returns.manage')&&<>
         <button className="button secondary" onClick={()=>{setOriginal('');setCreate('manual');}}><Plus size={16}/>Nouveau bon</button>
         <button className="button primary" onClick={()=>{setOriginal('');setCreate('import');}}><Upload size={17}/>Importer Excel</button></>}</>}>
-      <div className="filters"><Field title="Code ou numéro de bon"><input value={filters.search} onChange={e=>set('search',e.target.value)}/></Field>
+      <FilterGroup active={Object.entries(filters).filter(([name,value])=>name!=='search'&&value).length}
+        search={<Field title="Code ou numéro de bon"><input value={filters.search} onChange={e=>set('search',e.target.value)}/></Field>}>
         {!user.agencyId&&<Field title="Agence"><select value={filters.agencyId} onChange={e=>set('agencyId',e.target.value)}><RefOptions rows={refs.agencies} empty="Toutes les agences"/></select></Field>}
         <Field title="Statut"><select value={filters.status} onChange={e=>set('status',e.target.value)}><Options values={['BROUILLON','ENVOYE','RECU']} empty="Tous"/></select></Field>
         <Field title="Du"><input type="date" value={filters.from} onChange={e=>set('from',e.target.value)}/></Field>
         <Field title="Avant le"><input type="date" value={filters.to} onChange={e=>set('to',e.target.value)}/></Field>
-      </div>
+      </FilterGroup>
       <Notice error={rows.error||action.error} message={action.message}/>
       {rows.loading?<Busy/>:<Table rows={rows.data?.rows??[]} open={show} columns={[
         {title:'Bon',cell:r=><strong className="tracking">RET-{short(r.id)}</strong>},{title:'Agence',cell:r=>fmt(r.agency)},
@@ -62,7 +63,8 @@ export function AgencyReturns({user,refs,initialId}:{user:User;refs:References;i
           {bon.first_received_at!=null&&<span className="tag"><LockKeyhole size={14}/>Liste verrouillée</span>}
           {canManage&&bon.status==='BROUILLON'&&<button className="button secondary" onClick={()=>change('SEND')}>Envoyer</button>}
           {canManage&&bon.status==='ENVOYE'&&<button className="button secondary" onClick={()=>change('REOPEN')}>Rouvrir</button>}
-          {canScan&&bon.status!=='RECU'&&<button className="button primary" onClick={()=>setScan(!scan)}>{scan?'Fermer le scan':'Recevoir des colis'}</button>}
+          {canScan&&bon.status!=='RECU'&&<button className="button primary scan-entry" aria-expanded={scan} onClick={()=>setScan(!scan)}><ScanBarcode size={19}/>
+            {scan?'Fermer le scan':'Recevoir des colis'}</button>}
           {canScan&&bon.status==='ENVOYE'&&<button className="button secondary" disabled={Boolean(counts.missing)||(!counts.received&&!counts.reconciled)} onClick={()=>{
             if (window.confirm('Clôturer définitivement ce bon ? '+counts.received+' reçus, '+counts.reconciled+' rapprochés, '+counts.missing+' manquants.')) change('CLOSE');
           }}><ClipboardCheck size={16}/>Clôturer reçu</button>}
@@ -78,9 +80,9 @@ export function AgencyReturns({user,refs,initialId}:{user:User;refs:References;i
           extra={<div className="damage-options"><label className="check"><input type="checkbox" checked={damaged} onChange={e=>setDamaged(e.target.checked)}/> Colis endommagé</label>
             {damaged&&<div className="form-grid"><Field title="Note"><input value={note} onChange={e=>setNote(e.target.value)} maxLength={400}/></Field>
               <Field title="Photo (facultative)"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>setPhoto(e.target.files?.[0])}/></Field></div>}</div>}
-          scan={async input=>{
+          scan={async (input,signal)=>{
             const result=await api<{outcome:string}>('/return-bons/'+record+'/receive',{...input,damaged,note:damaged&&note.trim()?note.trim():undefined,
-              photo:damaged?await attachment(photo):undefined});
+              photo:damaged?await attachment(photo):undefined},'POST',signal);
             data.reload();return result;
           }}/>}
         {data.data?.canEdit&&<form className="filters" onSubmit={event=>submit(event,form=>void action.run(async()=>{
@@ -176,8 +178,8 @@ export function MerchantReturns({user,refs,initialId}:{user:User;refs:References
           }}><ClipboardCheck size={16}/>Confirmer ce bon</button>}
           {detail.data?.whatsapp&&<a className="button secondary" href={detail.data.whatsapp} target="_blank" rel="noreferrer"><MessageCircle size={16}/>WhatsApp manuel</a>}
         </div>
-        {verify&&bon.status==='EN_PREPARATION'&&<Scanner key={record} title="Vérification facultative" scan={async input=>{
-          const result=await api<{outcome:string}>('/merchant-returns/'+record+'/verify',input);detail.reload();return result;
+        {verify&&bon.status==='EN_PREPARATION'&&<Scanner key={record} title="Vérification facultative" scan={async (input,signal)=>{
+          const result=await api<{outcome:string}>('/merchant-returns/'+record+'/verify',input,'POST',signal);detail.reload();return result;
         }}/>}
         <Table rows={detail.data?.rows??[]} columns={[
           {title:'Code suivi',cell:parcelCode},{title:'Retour agence',cell:r=>when(r.received_at)},

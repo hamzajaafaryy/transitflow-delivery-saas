@@ -64,5 +64,5 @@ export async function seedPreview(fixture,api,origin) {
   await call('staff','POST','/finance/agency-bons/'+agencyPayment.id+'/remittance',{amount:15000,requestKey:randomUUID(),reference:'DÉMO-150'});
   await call('merchant','POST','/pickups',{zone:'Tanger',address:'12 rue Exemple · Adresse fictive'},201);
   await call('merchant','POST','/claims',{topic:'OTHER',subject:'Demande de suivi démo',message:'Bonjour, pouvez-vous vérifier le planning du ramassage ?'},201);
-  return {order:orders[0],returnBon:bon.bon,returnCode:refusals[1].tracking_code,merchantBon,agencyPayment};
+  return {order:orders[0],returnBon:bon.bon,returnCode:refusals[1].tracking_code,receivedReturnCode:first.tracking_code,merchantBon,agencyPayment};
 }

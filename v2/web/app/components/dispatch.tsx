@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, PackagePlus, Plus, Send } from 'lucide-react';
+import { ArrowLeft, PackagePlus, Plus, ScanBarcode, Send } from 'lucide-react';
 import { useState } from 'react';
 import { api, fmt, href, normalizeCodes, short, when, type PageRows,type References,type Row } from '../lib';
 import { Scanner } from './scanner';
@@ -53,8 +53,12 @@ export function Dispatch({refs}:{refs:References}) {
           {!bon.first_received_at&&<button className="button danger" onClick={()=>{if(window.confirm('Supprimer ce bon et remettre ses colis à Ramassé ?')){
             void action.run(async()=>{await api('/dispatch/'+record+'/state',{action:'DELETE',confirmed:true});selectRecord('');});
           }}}>Supprimer</button>}
-          {canEdit&&<button className="button secondary" onClick={()=>setScanMode(scanMode==='add'?'':'add')}>Scanner pour ajouter</button>}
+          {canEdit&&<button className="button primary scan-entry" aria-expanded={scanMode==='add'} onClick={()=>setScanMode(scanMode==='add'?'':'add')}><ScanBarcode size={19}/>
+            {scanMode==='add'?'Fermer le scan':'Scanner pour ajouter'}</button>}
         </div>
+    {record&&scanMode==='add'&&<Scanner key={record} title="Ajout au bon d’envoi" references={refs} scan={async (input,signal)=>{
+      const result=await api<{outcome:string}>('/dispatch/'+record+'/scan',input,'POST',signal);detail.reload();return result;
+    }}/>}
         <Table rows={detail.data?.items??[]} empty="Aucun colis dans le bon." columns={[
           {title:'Code suivi',cell:r=><span className="tracking">{fmt(r.tracking_code)}</span>},{title:'Marchand',cell:r=>fmt(r.merchant)},
           {title:'Statut',cell:r=><Status value={r.status}/>},{title:'Réception',cell:r=>when(r.received_at)},
@@ -70,9 +74,6 @@ export function Dispatch({refs}:{refs:References}) {
         <Pagination page={page} total={detail.data?.total??0} onPage={setPage}/></>}
       </>}
     </Panel>}
-    {record&&scanMode==='add'&&<Scanner key={record} title="Ajout au bon d’envoi" references={refs} scan={async input=>{
-      const result=await api<{outcome:string}>('/dispatch/'+record+'/scan',input);detail.reload();return result;
-    }}/>}
     <Panel title="Réception et distribution" description="Scans physiques ou validation manuelle groupée.">
       <div className="filters"><Field title="Agence"><select value={agencyId} onChange={e=>{setAgencyId(e.target.value);setScanMode('');}}><RefOptions rows={refs.agencies}/></select></Field>
         <button className="button secondary" disabled={!agencyId} onClick={()=>setScanMode('arrival')}>Reçu par ville</button>
@@ -80,7 +81,7 @@ export function Dispatch({refs}:{refs:References}) {
       </div>
       {agencyId&&(scanMode==='arrival'||scanMode==='distribution')&&<>
         <Scanner key={agencyId+scanMode} title={scanMode==='arrival'?'Reçu par ville':'Mise en distribution'} references={refs} receipt
-          scan={input=>api('/dispatch/agencies/'+agencyId+'/'+scanMode,input)}/>
+          scan={(input,signal)=>api('/dispatch/agencies/'+agencyId+'/'+scanMode,input,'POST',signal)}/>
         <form className="filters" onSubmit={event=>submit(event,form=>{if(window.confirm('Valider ces colis sans scan physique ?')) void action.run(async()=>{
           const result=await api<{results:{outcome:string}[]}>('/dispatch/agencies/'+agencyId+'/'+scanMode,{codes:normalizeCodes(value(form,'codes')),confirmed:true});
           const errors=result.results.filter(row=>row.outcome!=='RECEIVED');

@@ -52,9 +52,9 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path:string, data?:unknown, method=data===undefined?'GET':'POST'):Promise<T> {
+export async function api<T>(path:string, data?:unknown, method=data===undefined?'GET':'POST',signal?:AbortSignal):Promise<T> {
   const response=await fetch('/api/v2'+path,{
-    method,cache:'no-store',credentials:'same-origin',
+    method,signal,cache:'no-store',credentials:'same-origin',
     headers:{'X-TransitFlow-Request':'1','X-TransitFlow-Origin':window.location.origin,...(data!==undefined&&!(data instanceof FormData)?{'Content-Type':'application/json'}:{})},
     body:data===undefined?undefined:data instanceof FormData?data:JSON.stringify(data),
   });

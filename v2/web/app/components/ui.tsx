@@ -1,7 +1,7 @@
 'use client';
 
-import { AlertCircle, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { AlertCircle, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, display, fmt, type Reference, type Row } from '../lib';
 
 export function useResource<T>(path:string|null, interval=0) {
@@ -72,12 +72,30 @@ export function Panel({title,description,actions,children}:{title:string;descrip
 export function Table({rows,columns,open,selected,toggle,empty}:{rows:Row[];columns:{title:string;cell:(row:Row)=>ReactNode}[];
   open?:(id:string)=>void;selected?:string[];toggle?:(id:string)=>void;empty?:string}) {
   if (!rows.length) return <Empty text={empty}/>;
-  return <div className="table-wrap"><table><thead><tr>{toggle&&<th className="tick">Choix</th>}
-    {columns.map(column=><th key={column.title}>{column.title}</th>)}{open&&<th>Actions</th>}</tr></thead>
-    <tbody>{rows.map(row=><tr key={row.id}>{toggle&&<td><input type="checkbox" aria-label={'Sélectionner '+fmt(row.tracking_code||row.id)}
-      checked={selected?.includes(row.id)||false} onChange={()=>toggle(row.id)}/></td>}
-      {columns.map(column=><td key={column.title}>{column.cell(row)}</td>)}{open&&<td><button className="text-button" onClick={()=>open(row.id)}>Ouvrir</button></td>}
-    </tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table className="responsive-table" role="table">
+    <thead role="rowgroup"><tr role="row">{toggle&&<th scope="col" className="tick" role="columnheader">Choix</th>}
+      {columns.map(column=><th scope="col" key={column.title} role="columnheader">{column.title}</th>)}
+      {open&&<th scope="col" role="columnheader">Actions</th>}
+    </tr></thead>
+    <tbody role="rowgroup">{rows.map(row=>{
+      const checked=selected?.includes(row.id)||false;
+      return <tr key={row.id} role="row" data-selected={checked||undefined}>{toggle&&<td role="cell" className="table-select">
+        <label><input type="checkbox" aria-label={'Sélectionner '+fmt(row.tracking_code||row.id)} checked={checked} onChange={()=>toggle(row.id)}/>
+          <span>Choisir</span></label>
+      </td>}
+      {columns.map(column=><td role="cell" key={column.title} data-label={column.title}><div>{column.cell(row)}</div></td>)}
+      {open&&<td role="cell" className="table-open"><button className="text-button" onClick={()=>open(row.id)}>Ouvrir<ChevronRight size={16}/></button></td>}
+    </tr>;})}</tbody></table></div>;
+}
+export function FilterGroup({search,children,active=0}:{search:ReactNode;children:ReactNode;active?:number}) {
+  const [expanded,setExpanded]=useState(false);
+  const id=useId();
+  return <div className="filters mobile-filters" data-expanded={expanded}>
+    <div className="filter-search">{search}</div>
+    <button className="button secondary filter-toggle" type="button" aria-expanded={expanded} aria-controls={id}
+      onClick={()=>setExpanded(!expanded)}><SlidersHorizontal size={17}/> Filtres{active>0&&<span className="filter-count">{active}</span>}</button>
+    <div id={id} className="filter-fields">{children}</div>
+  </div>;
 }
 export function Pagination({page,total,onPage}:{page:number;total:number;onPage:(page:number)=>void}) {
   return <div className="pagination"><span>{total.toLocaleString('fr-MA')} résultat{total===1?'':'s'} · Page {page}</span>
@@ -91,9 +109,16 @@ export function Refresh({reload}:{reload:()=>void}) {
   return <button className="button secondary" onClick={reload}><RefreshCw size={15}/>Actualiser</button>;
 }
 export function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}) {
-  return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label={title}>
-    <div className="modal-head"><h2>{title}</h2><button className="icon-button" aria-label="Fermer" onClick={onClose}><X size={20}/></button></div>
-    <div className="modal-body">{children}</div></section></div>;
+  const dialog=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{
+    const element=dialog.current;
+    element?.showModal();
+    return ()=>element?.close();
+  },[]);
+  return <dialog className="modal" ref={dialog} aria-label={title} onCancel={event=>{event.preventDefault();onClose();}}>
+    <div className="modal-head"><h2>{title}</h2><button type="button" className="icon-button" aria-label="Fermer" onClick={onClose}><X size={20}/></button></div>
+    <div className="modal-body">{children}</div>
+  </dialog>;
 }
 export function Field({title,children,hint}:{title:string;children:ReactNode;hint?:string}) {
   return <label className="field"><span>{title}</span>{children}{hint&&<small>{hint}</small>}</label>;

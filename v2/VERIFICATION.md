@@ -30,3 +30,11 @@ Sur un jeu fictif de petite taille, 100 employés distincts ont obtenu 100 répo
 - Les pièces jointes sont des blobs PostgreSQL bornés et téléchargés via une route autorisée. Les justificatifs et journaux privés ne sont pas servis par Next.js statique. Les PDF de Preview utilisent des polices PDF standard, dont les jeux de caractères sont limités.
 - Le calendrier ouvré applique le retour au GMT à partir du 20 septembre 2026, même si la base horaire du téléphone n’est pas à jour. Le manager renseigne les jours fériés. [Communiqué du gouvernement marocain](https://www.cg.gov.ma/fr/node/13036) Le compte Admin représente la direction pour la délégation des dossiers escaladés. Le support général applique affinité marchand, puis charge, puis dernière activité. Le retour marchand publie l’événement Reçu par client et attend la confirmation du marchand dans la même transaction.
 - La Preview génère une base jetable et des comptes de démonstration aléatoires. Elle peut tourner dans un Codespace privé. L’exception de réécriture Origin est bornée au nom et au port 3200 de ce Codespace et exige un second en-tête de même origine.
+
+
+## Utilisation mobile et scan en exploitation
+
+- Sur téléphone, les modules fréquents sont accessibles depuis la barre basse. Les cartes gardent tous les champs et actions de la liste. Le code ou le téléphone reste directement recherchable et les autres filtres se déplient à la demande.
+- Le scanner garde le dernier résultat visible avec un libellé, le code et une icône. Les trois sons courts distinguent validation, doublon et refus ou panne. Le choix de couper le son reste sur l’appareil. « Tester le son » permet de vérifier le réglage du poste avant de commencer.
+- Le même code reste ignoré tant que la caméra le voit. La saisie clavier ou la douchette en mode clavier demande toujours une confirmation explicite. Un essai réseau incertain se relance avec la même clé et les mêmes données. Les entrées automatiques se mettent en pause hors connexion.
+- Le parcours Chromium utilise un flux caméra Code 128 synthétique et contrôle les fréquences déclenchées, le dédoublonnage, la reprise après un 503, les compteurs, le réglage du son et les écrans de 320 à 390 px. La caméra et le lecteur USB série doivent encore être essayés sur les postes réels.

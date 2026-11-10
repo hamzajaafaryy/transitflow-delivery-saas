@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   icons:{icon:'/mark.svg',apple:'/icon-192.png'},
   appleWebApp:{capable:true,statusBarStyle:'black-translucent',title:'TransitFlow'},
 };
-export const viewport:Viewport={width:'device-width',initialScale:1,themeColor:'#102434'};
+export const viewport:Viewport={width:'device-width',initialScale:1,viewportFit:'cover',themeColor:'#102434'};
 
 export default function RootLayout({ children }: Readonly<{children:React.ReactNode}>) {
   return <html lang="fr"><body>{children}</body></html>;

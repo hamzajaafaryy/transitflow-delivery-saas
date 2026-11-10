@@ -1,10 +1,10 @@
 'use client';
 
-import { Boxes, Plus, Printer } from 'lucide-react';
+import { Boxes, Plus, Printer, ScanBarcode } from 'lucide-react';
 import { useState } from 'react';
 import { api, can, dateBoundary, fmt, href, money, orderStatuses, packagingKinds, when,
   type PageRows,type References,type Row,type User } from '../lib';
-import { Busy, Download, Field, Modal, Notice, Options, Pagination, Panel, RefOptions, Status, Table, cents,
+import { Busy, Download, Field, FilterGroup, Modal, Notice, Options, Pagination, Panel, RefOptions, Status, Table, cents,
   integer, submit, useAction, useResource, value } from './ui';
 import { Scanner } from './scanner';
 
@@ -50,34 +50,36 @@ export function Orders({user,refs,initialId}:{user:User;refs:References;initialI
     <Panel title={agency?'Stock Colis':'Commandes'} description={agency?'Colis physiquement détenus par votre agence.':'Suivi opérationnel par date réelle de changement de statut.'}
       actions={<>{(agency||can(user,'orders.export'))&&<Download path={href(agency?'/agency-stock/export':'/orders/export',filters)}>Exporter Excel</Download>}
         {can(user,'orders.create')&&<button className="button primary" onClick={()=>setCreate(true)}><Plus size={17}/>Nouvelle commande</button>}</>}>
-      <div className="filters">
-        <Field title="Recherche"><input placeholder={agency?'Code suivi':'Code suivi ou téléphone'} value={filter.search} onChange={event=>set('search',event.target.value)}/></Field>
+      <FilterGroup active={Object.entries(filter).filter(([name,value])=>name!=='search'&&value).length}
+        search={<Field title="Recherche"><input placeholder={agency?'Code suivi':'Code suivi ou téléphone'} value={filter.search}
+          onChange={event=>set('search',event.target.value)}/></Field>}>
         <Field title="Statut"><select value={filter.status} onChange={event=>set('status',event.target.value)}><Options values={orderStatuses} empty="Tous les statuts"/></select></Field>
         {!agency&&<Field title="Ville"><select value={filter.city} onChange={event=>set('city',event.target.value)}><Options values={refs.cities} empty="Toutes les villes"/></select></Field>}
         {!user.merchantId&&!agency&&<Field title="Marchand"><select value={filter.merchantId} onChange={event=>set('merchantId',event.target.value)}><RefOptions rows={refs.merchants} empty="Tous les marchands"/></select></Field>}
         {!user.merchantId&&!agency&&<Field title="Agence"><select value={filter.agencyId} onChange={event=>set('agencyId',event.target.value)}><RefOptions rows={refs.agencies} empty="Toutes les agences"/></select></Field>}
         {dateFields('Du',filter.from,v=>set('from',v))}{dateFields('Avant le',filter.to,v=>set('to',v))}
-      </div>
+      </FilterGroup>
       {!agency&&<div className="action-strip">
         <button className="button secondary" disabled={!selected.length||action.busy} onClick={()=>void action.run(async()=>{
           const result=await api<{id:string}>('/tickets',{ids:selected});setBatch(result.id);
         },'Lot de tickets préparé.')}><Printer size={16}/>Tickets 100 × 100 {selected.length?('· '+selected.length):''}</button>
         {batch&&<Download path={'/tickets/'+batch+'/pdf'}>Télécharger / réimprimer</Download>}
         {can(user,'dispatch.manage')&&<>
-          <button className="button secondary" onClick={()=>setCollect(!collect)}>{collect?'Fermer le scan':'Scanner le ramassage'}</button>
+          <button className="button primary scan-entry" aria-expanded={collect} onClick={()=>setCollect(!collect)}><ScanBarcode size={19}/>
+            {collect?'Fermer le scan':'Scanner le ramassage'}</button>
           {batch&&<button className="button secondary" onClick={()=>{if(window.confirm('Confirmer le ramassage en lot sous votre responsabilité ?'))
             void action.run(()=>api('/tickets/'+batch+'/collect',{confirmed:true}),'Ramassage en lot traité.');}}>Ramasser le lot imprimé</button>}
         </>}
         {can(user,'stock.manage')&&<button className="button secondary" disabled={!selected.length} onClick={()=>setPack(true)}><Boxes size={16}/>Emballage</button>}
       </div>}
+    {collect&&<Scanner title="Ramassage · arrivée entrepôt" references={refs} scan={async (input,signal)=>{
+      const result=await api<{outcome:string}>('/orders/collect',input,'POST',signal);orders.reload();return result;
+    }}/>}
       <Notice error={orders.error||action.error} message={action.message}/>
       {orders.loading?<Busy/>:<Table rows={orders.data?.rows??[]} columns={columns} open={setOpen}
         selected={selected} toggle={agency?undefined:id=>setSelected(previous=>previous.includes(id)?previous.filter(key=>key!==id):[...previous,id])}/>}
       <Pagination page={page} total={orders.data?.total??0} onPage={setPage}/>
     </Panel>
-    {collect&&<Scanner title="Ramassage · arrivée entrepôt" references={refs} scan={async input=>{
-      const result=await api<{outcome:string}>('/orders/collect',input);orders.reload();return result;
-    }}/>}
     {create&&<Modal title="Nouvelle commande" onClose={()=>{setCreate(false);setSource('EXTERNAL');setItemCount(1);}}>
       <form className="form-grid" onSubmit={event=>submit(event,data=>void action.run(async()=>{
         const items=source==='STOCK'?Array.from({length:itemCount},(_,index)=>({

@@ -33,6 +33,10 @@ const items=[
 ] as const;
 type View=typeof items[number]['key'];
 const groups=['Pilotage','Exploitation','Retours & finance','Administration'];
+const quickLabels:Partial<Record<View,string>>={
+  dashboard:'Accueil',orders:'Colis',dispatch:'Envois','agency-returns':'Retours','merchant-returns':'Retours',
+  pickups:'Ramassage',finance:'Finance',claims:'Réclamations',stock:'Stock',
+};
 const entry:Record<View,string>={
   dashboard:'Suivez les opérations de livraison, du ramassage au règlement.',
   orders:'Recherchez un colis, contrôlez son statut et préparez vos tickets.',
@@ -150,6 +154,10 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>void}) {
   const refs=useResource<References>('/references');
   const alerts=useResource<{rows:Row[];unread:number}>('/notifications',15_000);
   const allowed=items.filter(item=>visible(user,item.permission));
+  const quickPriority:View[]=user.merchantId
+    ? ['dashboard','orders','merchant-returns','finance']
+    : ['dashboard','orders','agency-returns','dispatch','pickups','merchant-returns','stock','claims','finance'];
+  const quick=quickPriority.flatMap(key=>allowed.filter(item=>item.key===key)).slice(0,4);
   useEffect(()=>{
     function read(){
       const query=new URLSearchParams(window.location.search),requested=query.get('view');
@@ -164,6 +172,7 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>void}) {
   function go(view:View,record?:string){
     setLocation({view,record});setMenu(false);setBell(false);
     window.history.pushState({},'',view==='dashboard'?'/':href('/',{view,record}));
+    window.scrollTo({top:0});
   }
   const item=allowed.find(item=>item.key===location.view)??allowed[0];
   const title=user.agencyId&&item.key==='orders'?'Stock Colis':item.name;
@@ -191,7 +200,7 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>void}) {
   };
   return <div className="workspace">
     {menu&&<button className="mobile-overlay" aria-label="Fermer le menu" onClick={()=>setMenu(false)}/>}
-    <aside className={'sidebar '+(menu?'mobile-open':'')}>
+    <aside id="main-navigation" className={'sidebar '+(menu?'mobile-open':'')}>
       <div className="sidebar-brand"><Brand dark/><button className="icon-button close-nav" onClick={()=>setMenu(false)} aria-label="Fermer le menu"><X size={20}/></button></div>
       <div className="scope-card"><span className="scope-icon"><Warehouse size={17}/></span><div><strong>{user.agencyId?'Agence partenaire':user.merchantId?'Espace marchand':'Exploitation'}</strong><small>Maroc · V2</small></div></div>
       <nav aria-label="Navigation principale">
@@ -202,7 +211,7 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>void}) {
       <div className="sidebar-bottom"><span className="connection-dot"/> Espace de travail sécurisé</div>
     </aside>
     <div className="workspace-main">
-      <header className="topbar"><div className="top-left"><button className="icon-button mobile-menu" aria-label="Ouvrir le menu" onClick={()=>setMenu(true)}><Menu size={22}/></button>
+      <header className="topbar"><div className="top-left"><button className="icon-button mobile-menu" aria-label="Ouvrir le menu" aria-controls="main-navigation" aria-expanded={menu} onClick={()=>setMenu(true)}><Menu size={22}/></button>
         <div className="breadcrumb"><span>Espace de travail</span><span className="slash">/</span><strong>{title}</strong></div>
       </div>
       <div className="top-actions">
@@ -220,6 +229,11 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>void}) {
         <p>{user.agencyId&&item.key==='orders'?'Colis actuellement détenus par votre agence.':entry[item.key]}</p></div>
         <span className="date-chip"><Clock3 size={15}/>{new Intl.DateTimeFormat('fr-MA',{dateStyle:'long',timeZone:moroccoZone(new Date())}).format(new Date())}</span>
       </div><div className="page-body" key={item.key+location.record}>{screen[item.key]()}</div></main>
+      {quick.length>1&&<nav className="mobile-quick-nav" aria-label="Navigation rapide">
+        {quick.map(link=><button key={link.key} aria-current={item.key===link.key?'page':undefined} onClick={()=>go(link.key)}>
+          <link.icon size={20}/><span>{quickLabels[link.key]??link.name}</span>
+        </button>)}
+      </nav>}
     </div>
   </div>;
 }
