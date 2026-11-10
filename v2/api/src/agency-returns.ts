@@ -67,10 +67,12 @@ async function detail(db: Database,user: Principal,bon: Bon) {
   const lines=(await db.query(`SELECT l.id,l.tracking_code,l.anomaly_reason,l.received_at,l.input_method,l.superseded_at,l.superseded_by,
       l.damaged,l.damage_note,l.damage_photo_id,
       CASE WHEN $2 THEN NULL ELSE l.order_id END AS order_id,
-      CASE WHEN l.anomaly_reason IS NULL THEN o.status END AS order_status,
-      COALESCE(v2_return_eligible(o.status,o.return_authorized,o.is_exchange),false) AS status_valid,
-      COALESCE(${required},false) AS required,o.is_exchange
-    FROM v2_return_bon_lines l LEFT JOIN v2_orders o ON o.id=l.order_id WHERE l.bon_id=$1 ORDER BY l.tracking_code`,
+      CASE WHEN s.line_id IS NOT NULL THEN s.order_status WHEN l.anomaly_reason IS NULL THEN o.status END AS order_status,
+      COALESCE(s.status_valid,l.anomaly_reason IS NULL AND v2_return_eligible(o.status,o.return_authorized,o.is_exchange),false) AS status_valid,
+      COALESCE(s.required,${required},false) AS required,
+      COALESCE(s.is_exchange,l.anomaly_reason IS NULL AND o.is_exchange,false) AS is_exchange
+    FROM v2_return_bon_lines l LEFT JOIN v2_orders o ON o.id=l.order_id
+    LEFT JOIN v2_return_close_lines s ON s.line_id=l.id WHERE l.bon_id=$1 ORDER BY l.tracking_code`,
     [bon.id,Boolean(user.agencyId)])).rows;
   return {
     bon,lines,canEdit:canEditReturnBonMembership(user,{agencyId:bon.agency_id,creatorKind:bon.creator_kind,
@@ -95,8 +97,9 @@ export function agencyReturnRoutes(ctx: Context) {
     if (user.agencyId && query.agencyId && user.agencyId!==query.agencyId) throw forbidden();
     const {rows}=await pool.query(`SELECT ${bonFields}, COUNT(*) OVER()::int AS total,
       (SELECT COUNT(*)::int FROM v2_return_bon_lines l WHERE l.bon_id=b.id AND l.received_at IS NOT NULL) AS received,
-      (SELECT COUNT(*)::int FROM v2_return_bon_lines l LEFT JOIN v2_orders o ON o.id=l.order_id
-        WHERE l.bon_id=b.id AND l.received_at IS NULL AND l.superseded_at IS NULL AND ${required}) AS expected
+      CASE WHEN b.status='RECU' THEN 0 ELSE
+        (SELECT COUNT(*)::int FROM v2_return_bon_lines l LEFT JOIN v2_orders o ON o.id=l.order_id
+          WHERE l.bon_id=b.id AND l.received_at IS NULL AND l.superseded_at IS NULL AND ${required}) END AS expected
       FROM v2_return_bons b JOIN v2_agencies a ON a.id=b.agency_id
       WHERE b.deleted_at IS NULL AND ($1::uuid IS NULL OR b.agency_id=$1) AND ($2::text IS NULL OR b.status=$2)
       AND ($3::timestamptz IS NULL OR b.created_at>=$3) AND ($4::timestamptz IS NULL OR b.created_at<$4)

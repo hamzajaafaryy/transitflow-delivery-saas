@@ -44,7 +44,7 @@ test('V2 production Preview in Chromium · staff receipt and mobile merchant con
   await staff.getByRole('button',{name:'Valider la saisie'}).click();
   await staff.getByText('Vous confirmez la réception de ce colis sans scan physique.',{exact:false}).waitFor();
   await staff.getByRole('button',{name:'Confirmer sous ma responsabilité'}).click();
-  await staff.getByText('Colis enregistré.',{exact:true}).waitFor();
+  await staff.locator('.toast-stack').getByText('Colis enregistré.',{exact:true}).waitFor();
   await staff.getByRole('button',{name:'Clôturer reçu'}).click();
   const download=staff.waitForEvent('download');
   await staff.getByRole('link',{name:'Télécharger PDF A4'}).click();

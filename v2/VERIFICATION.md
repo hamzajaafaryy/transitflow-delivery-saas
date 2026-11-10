@@ -14,17 +14,17 @@ Le [Master Spec](TRANSITFLOW_MASTER_SPEC.md) reste intégral et prioritaire. Cet
 | 8. Retour Client | File, sélection, double exemplaire PDF, remise, confirmation par bon et interdiction de rouvrir après confirmation | Vérifier les variantes opérateur/clients sur plusieurs jours et les liens WhatsApp réels |
 | 9. Finance | Crédit COD indépendant, refus, retrait marchand, remises partielles, restrictions et documents figés | Rapprochements bancaires réels, contrôle des corrections et dettes sur des historiques plus longs |
 | 10. Réclamations | Réclamation après confirmation, doublon, privé, réponse, fermeture, trois réouvertures, calcul des pauses SLA | Charge et rééquilibrage >10 en exploitation, jours fériés configurés, attachements et flux temps réel en navigateur |
-| 11. Sécurité/opérations | Rôle DB restreint, absence d’accès par ID, 2FA, CSRF, révocation, audit, 100 requêtes en parallèle | Environnement HTTPS de revue, sauvegardes chiffrées 30/12 et restauration, surveillance externe, test représentatif de 100 employés distincts |
+| 11. Sécurité/opérations | Rôle DB restreint, absence d’accès par ID, 2FA, CSRF, révocation, audit, 100 employés distincts en parallèle | Environnement HTTPS de revue, sauvegardes chiffrées 30/12 et restauration, surveillance externe, charge représentative avec volumes et actions multiples |
 | 12. Acceptation | Builds Next/Nest, lockfiles, tests API/DB et test Chromium reproductible | Recette complète, validation métier, performances et déploiement de production |
 
 ## Mesures de développement
 
-Un premier essai avec 100 requêtes simultanées et un compte de test partagé sur un jeu fictif de petite taille a donné p95 **238,4 ms** sur la liste des commandes. La cible de **200 ms** reste à confirmer sous une charge représentative. Ce chiffre inclut les connexions HTTP du test. Le script rapporte le résultat de chaque nouvelle exécution.
+Sur un jeu fictif de petite taille, 100 employés distincts ont obtenu 100 réponses correctes sur la liste des commandes. Le p95 observé était **296,0 ms** à froid, connexions HTTP incluses. La cible de **200 ms** reste ouverte. Le script rapporte la mesure de chaque exécution.
 
 ## Décisions d’implémentation
 
 - Next.js sert les interfaces et relaie la même origine vers Nest/Fastify. PostgreSQL reste la source d’état et de concurrence. Les petites tâches SLA et surveillance s’exécutent sous verrou PostgreSQL. Le déploiement distribué Redis/BullMQ reste à câbler.
-- Le premier scan valide prend un verrou par agence pour sérialiser les Bons chevauchants. L’ordre parvient au warehouse dans la même transaction que le rapprochement et la file de remise ou la réintégration. L’import XLSX déduplique le code et conserve les anomalies. L’empreinte canonique du contenu normalisé est limitée à l’agence.
+- Le premier scan valide prend un verrou par agence pour sérialiser les Bons chevauchants. L’ordre parvient au warehouse dans la même transaction que le rapprochement et la file de remise ou la réintégration. La clôture fige les classifications visibles sur le bon. L’import XLSX déduplique le code et conserve les anomalies. L’empreinte canonique du contenu normalisé est limitée à l’agence.
 - Les montants sont des centimes en base. Un bon de paiement agence cumule le COD brut des colis livrés choisis. Les tarifs livraison/refus et emballage marchand sont figés sur la commande pour le calcul marchand. Le Developer possède l’accès technique sans capacité de confirmer Payé.
 - Le lecteur USB supporté dans le navigateur doit fonctionner en mode série avec terminaison CR/LF à 9600 bauds. Les caractères reçus par l’entrée clavier restent une saisie manuelle, y compris les douchettes clavier. La caméra utilise ZXing à la demande. La provenance client est auditée. Une attestation matérielle cryptographique exige un lecteur compatible et reste hors validation.
 - Les pièces jointes sont des blobs PostgreSQL bornés et téléchargés via une route autorisée. Les justificatifs et journaux privés ne sont pas servis par Next.js statique. Les PDF de Preview utilisent des polices PDF standard, dont les jeux de caractères sont limités.

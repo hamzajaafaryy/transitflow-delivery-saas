@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import test from 'node:test';
 import { PDFDocument } from 'pdf-lib';
@@ -7,7 +7,7 @@ import { fixture } from './fixture.mjs';
 import { createApp } from '../dist/main.js';
 import { database, verifyRuntimeRole } from '../dist/db.js';
 import { workbook, readWorkbook } from '../dist/documents.js';
-import { totpAt } from '../dist/security/crypto.js';
+import { digest, totpAt } from '../dist/security/crypto.js';
 
 const origin='http://127.0.0.1:3200';
 const base='/api/v2';
@@ -155,6 +155,11 @@ test('V2 real PostgreSQL · auth, scan races, stock, custody, finance, handoff, 
     assert.equal((await PDFDocument.load(pdf)).getPageCount(),1);
     assert.equal((await f.query('SELECT status,current_holder_type FROM v2_orders WHERE id=$1',[external.id])).status,'REFUSE');
     assert.equal((await f.query('SELECT count(*)::int AS count FROM v2_scan_events WHERE evidence=\'UNVERIFIED\' AND bon_id=$1',[winner.id])).count,2);
+    await status(external,'REPORTE');
+    const historical=(await call('agency','GET','/return-bons/'+winner.id)).body;
+    assert.equal(historical.lines.find(line=>line.tracking_code===external.tracking_code).order_status,'REFUSE');
+    assert.equal(historical.counts.expected,0);
+    await status(external,'REFUSE');
   });
 
   await t.test('signed partner mapping, immediate COD, replays, paid immutability and finance restriction',async()=>{
@@ -224,15 +229,24 @@ test('V2 real PostgreSQL · auth, scan races, stock, custody, finance, handoff, 
   await t.test('100 concurrent authenticated API requests and revoked session',async()=>{
     await app.listen(0,'127.0.0.1');
     const address=api.server.address();
-    const times=await Promise.all(Array.from({length:100},async()=>{
+    const synthetic=(await f.db.query(`INSERT INTO v2_users(role,password_hash,display_name)
+      SELECT 'EMPLOYEE',s.password_hash,'Load test '||i FROM v2_users s CROSS JOIN generate_series(1,100) i
+      WHERE s.id=$1 RETURNING id`,[f.accounts.staff.id])).rows;
+    const tokens=synthetic.map(()=>randomBytes(32).toString('base64url'));
+    await f.db.query(`INSERT INTO v2_user_permissions(user_id,permission_code,granted_by)
+      SELECT u,'orders.read',$2 FROM unnest($1::uuid[]) u`,[synthetic.map(row=>row.id),f.accounts.admin.id]);
+    await f.db.query(`INSERT INTO v2_sessions(user_id,token_hash,expires_at,mfa_verified)
+      SELECT u,t,now()+interval '30 minutes',false FROM unnest($1::uuid[],$2::text[]) p(u,t)`,
+      [synthetic.map(row=>row.id),tokens.map(digest)]);
+    const times=await Promise.all(tokens.map(async token=>{
       const start=performance.now();
-      const response=await fetch('http://127.0.0.1:'+address.port+base+'/orders',{headers:{cookie:cookies.staff}});
+      const response=await fetch('http://127.0.0.1:'+address.port+base+'/orders',{headers:{cookie:'tf_v2_local='+token}});
       assert.equal(response.status,200);
       await response.arrayBuffer();
       return performance.now()-start;
     }));
     times.sort((a,b)=>a-b);
-    t.diagnostic('p95 /orders, 100 concurrent requests with a shared test session and small synthetic dataset: '+times[94].toFixed(1)+' ms');
+    t.diagnostic('p95 /orders, 100 concurrent distinct staff sessions on a small synthetic dataset: '+times[94].toFixed(1)+' ms');
     await call('staff','POST','/auth/logout',{},204);
     await call('staff','GET','/orders',undefined,401);
   });
