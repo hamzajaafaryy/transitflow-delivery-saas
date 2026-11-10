@@ -1,0 +1,81 @@
+name: TransitFlow V2 verification
+on:
+  push:
+    branches: [transitflow-v2-foundation]
+    paths:
+      - 'v2/**'
+      - '.github/workflows/v2-api-checks.yml'
+  pull_request:
+    branches: [transitflow-v2-foundation]
+    paths:
+      - 'v2/**'
+      - '.github/workflows/v2-api-checks.yml'
+permissions:
+  contents: read
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: tf-ci-postgres
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TF_MIGRATION_DATABASE_URL: postgresql://postgres:tf-ci-postgres@127.0.0.1:55433/postgres
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            v2/api/package-lock.json
+            v2/web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --prefix v2/api --no-audit --no-fund
+      - run: npm ci --prefix v2/web --no-audit --no-fund
+      - run: npm run check --prefix v2/api
+      - run: node --test v2/api/tests/operations.integration.mjs
+      - name: Test encrypted PostgreSQL backup and restoration
+        env:
+          TF_PG_SERVICE_ID: ${{ job.services.postgres.id }}
+          TF_PG_BIN_DIR: ${{ runner.temp }}/tf-pg-bin
+        run: |
+          mkdir -p "$TF_PG_BIN_DIR"
+          for tool in pg_dump pg_restore; do
+            cat > "$TF_PG_BIN_DIR/$tool" <<'SCRIPT'
+          #!/usr/bin/env bash
+          exec docker exec -i -e PGDATABASE -e PGUSER -e PGPASSWORD "$TF_PG_SERVICE_ID" "${0##*/}" "$@"
+          SCRIPT
+            chmod 0755 "$TF_PG_BIN_DIR/$tool"
+          done
+          node --test v2/api/tests/backup.integration.mjs
+      - run: npm run build --prefix v2/web
+      - name: Install Chromium for browser verification
+        run: |
+          npm install --prefix "$RUNNER_TEMP/tf-v2-browser" --no-save --package-lock=false playwright@1.62.1
+          node "$RUNNER_TEMP/tf-v2-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Verify Preview in Chromium
+        env:
+          NODE_PATH: ${{ runner.temp }}/tf-v2-browser/node_modules
+        run: node --test v2/preview/browser.test.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transitflow-v2-browser
+          path: browser-evidence/v2/
+          retention-days: 7
+          if-no-files-found: ignore
