@@ -40,3 +40,10 @@ NODE_PATH=/path/to/playwright/node_modules node --test v2/preview/browser.test.m
 ```
 
 Pour les tests navigateur, installer Chromium via Playwright ou définir `CHROMIUM_EXECUTABLE_PATH` vers le Chromium du runner.
+
+
+## Sauvegarde et restauration
+
+La commande `node v2/api/scripts/backup.mjs create` exécute `pg_dump` au format custom, chiffre le flux avec AES-256-GCM et conserve 30 fichiers quotidiens et 12 mensuels. Utiliser des clients `pg_dump` et `pg_restore` compatibles avec la version du serveur PostgreSQL. Ils peuvent être fournis dans `TF_PG_BIN_DIR`. Placer `TF_BACKUP_DATABASE_URL`, `TF_BACKUP_DIR` (répertoire privé 0700) et une clé indépendante `TF_BACKUP_KEY` (32 octets en hex) dans la configuration privée du job quotidien. La clé de données applicative `TF_DATA_KEY` est également nécessaire au redémarrage après restauration. Conserver ces clés séparément de l’archive. Ajouter `sslmode=verify-full` aux URL PostgreSQL hors loopback.
+
+Pour un exercice, préparer un cluster de test avec le groupe `transitflow_v2_runtime` sans LOGIN et créer une base vide nommée `tf_restore_…`. Fournir son URL dans `TF_RESTORE_DATABASE_URL`, puis exécuter `node v2/api/scripts/backup.mjs restore <archive>`. L’archive est authentifiée avant son chargement, le chargement est transactionnel et refuse une base occupée. Le volume de restauration doit être privé, car l’archive déchiffrée y existe pendant la vérification. La planification et la destination de sauvegarde de production doivent être configurées sur l’infrastructure retenue.

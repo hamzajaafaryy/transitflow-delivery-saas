@@ -49,6 +49,20 @@ jobs:
       - run: npm ci --prefix v2/web --no-audit --no-fund
       - run: npm run check --prefix v2/api
       - run: node --test v2/api/tests/operations.integration.mjs
+      - name: Test encrypted PostgreSQL backup and restoration
+        env:
+          TF_PG_SERVICE_ID: ${{ job.services.postgres.id }}
+          TF_PG_BIN_DIR: ${{ runner.temp }}/tf-pg-bin
+        run: |
+          mkdir -p "$TF_PG_BIN_DIR"
+          for tool in pg_dump pg_restore; do
+            cat > "$TF_PG_BIN_DIR/$tool" <<'SCRIPT'
+          #!/usr/bin/env bash
+          exec docker exec -i -e PGDATABASE -e PGUSER -e PGPASSWORD "$TF_PG_SERVICE_ID" "${0##*/}" "$@"
+          SCRIPT
+            chmod 0755 "$TF_PG_BIN_DIR/$tool"
+          done
+          node --test v2/api/tests/backup.integration.mjs
       - run: npm run build --prefix v2/web
       - name: Install Chromium for browser verification
         run: |

@@ -14,7 +14,7 @@ Le [Master Spec](TRANSITFLOW_MASTER_SPEC.md) reste intégral et prioritaire. Cet
 | 8. Retour Client | File, sélection, double exemplaire PDF, remise, confirmation par bon et interdiction de rouvrir après confirmation | Vérifier les variantes opérateur/clients sur plusieurs jours et les liens WhatsApp réels |
 | 9. Finance | Crédit COD indépendant, refus, retrait marchand, remises partielles, restrictions et documents figés | Rapprochements bancaires réels, contrôle des corrections et dettes sur des historiques plus longs |
 | 10. Réclamations | Réclamation après confirmation, doublon, privé, réponse, fermeture, trois réouvertures, calcul des pauses SLA | Charge et rééquilibrage >10 en exploitation, jours fériés configurés, attachements et flux temps réel en navigateur |
-| 11. Sécurité/opérations | Rôle DB restreint, absence d’accès par ID, 2FA, CSRF, révocation, audit, 100 employés distincts en parallèle | Environnement HTTPS de revue, sauvegardes chiffrées 30/12 et restauration, surveillance externe, charge représentative avec volumes et actions multiples |
+| 11. Sécurité/opérations | Rôle DB restreint, absence d’accès par ID, 2FA, CSRF, révocation, audit, 100 employés distincts en parallèle, Preview HTTPS avec comptes fictifs, sauvegarde chiffrée et restauration en CI | Planification et stockage durable des sauvegardes, exercices en environnement d’exploitation, surveillance externe, charge représentative avec volumes et actions multiples |
 | 12. Acceptation | Builds Next/Nest, lockfiles, tests API/DB et test Chromium reproductible | Recette complète, validation métier, performances et déploiement de production |
 
 ## Mesures de développement
