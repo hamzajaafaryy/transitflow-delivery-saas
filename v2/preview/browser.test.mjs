@@ -79,10 +79,12 @@ test('V2 production Preview in Chromium · staff receipt and mobile merchant con
   await staff.getByRole('heading',{name:'Commandes',exact:true,level:1}).waitFor();
   assert.ok(await fits(staff),'Mobile order cards fit the screen');
   const filter=staff.getByRole('button',{name:'Filtres',exact:true});
+  const statusFilter=staff.locator('.mobile-filters .filter-fields').getByRole('combobox').first();
   await filter.click();
-  await staff.getByLabel('Statut',{exact:true}).waitFor();
+  assert.equal(await filter.getAttribute('aria-expanded'),'true');
+  await statusFilter.waitFor({timeout:8000});
   await filter.click();
-  assert.equal(await staff.getByLabel('Statut',{exact:true}).isVisible(),false);
+  assert.equal(await statusFilter.isVisible(),false);
   await quick.getByRole('button',{name:'Retours',exact:true}).click();
   await staff.getByRole('button',{name:'Ouvrir',exact:true}).first().click();
   await staff.getByText('Liste verrouillée',{exact:true}).waitFor();
@@ -103,7 +105,7 @@ test('V2 production Preview in Chromium · staff receipt and mobile merchant con
     if (request.method()==='POST' && request.url().endsWith('/receive') && request.postDataJSON()?.method==='CAMERA') cameraCalls++;
   });
   await camera.click();
-  await scanner.locator('.scan-result.duplicate').getByText('Déjà scanné',{exact:true}).waitFor();
+  await scanner.locator('.scan-result.duplicate').getByText('Déjà scanné',{exact:true}).waitFor({timeout:10000});
   // This exceeds the old 1.8 second timer while the same code remains in view.
   await setTimeout(2400);
   assert.equal(cameraCalls,1);
