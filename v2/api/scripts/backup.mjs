@@ -129,7 +129,9 @@ export async function restoreBackup({archive,connection,key}) {
     await client.query("SELECT pg_advisory_lock(hashtextextended('transitflow-v2-backup-restore',0))");
     const existing=(await client.query("SELECT EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')) AS occupied")).rows[0];
     if (existing.occupied) throw new Error('Restore target already contains application objects.');
-    restore=pgCommand('pg_restore',['--dbname='+env.PGDATABASE,'--single-transaction','--exit-on-error','--no-owner'],env,['pipe','ignore','ignore']);
+    // A schema-scoped archive includes CREATE SCHEMA public. The guarded empty target
+    // starts with PostgreSQL's default public schema, so let pg_restore recreate it.
+    restore=pgCommand('pg_restore',['--dbname='+env.PGDATABASE,'--clean','--if-exists','--single-transaction','--exit-on-error','--no-owner'],env,['pipe','ignore','ignore']);
     await Promise.all([pipeline(createReadStream(path),restore.stdin),checkedExit(restore,'pg_restore')]);
     const result=(await client.query(`SELECT (SELECT COUNT(*)::int FROM v2_schema_migrations) AS migrations,
       (SELECT COUNT(*)::int FROM v2_orders) AS orders`)).rows[0];
