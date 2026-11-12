@@ -62,7 +62,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   const isMerchant=user.role==='MERCHANT';
   if(isMerchant&&(!user.merchant_id||data.agencyId||data.partnerId||data.driverId||(data.merchantId&&data.merchantId!==user.merchant_id)))throw fail(403,'Affectation non autorisée pour ce marchand');
   const merchantId=isMerchant?user.merchant_id:(data.merchantId||null),driverId=isMerchant?null:(data.driverId||null);
-  const agency=data.agencyId?stmt('SELECT * FROM agencies WHERE id=? AND company_id=?',data.agencyId,user.company_id):stmt('SELECT * FROM agencies WHERE company_id=? AND city_key=?',user.company_id,cityKey(city));
+  const agency=data.agencyId?stmt('SELECT * FROM agencies WHERE id=? AND company_id=?',data.agencyId,user.company_id):stmt("SELECT * FROM agencies WHERE company_id=? AND city_key=? ORDER BY CASE kind WHEN 'INTERNAL' THEN 0 ELSE 1 END,created_at,id LIMIT 1",user.company_id,cityKey(city));
   if(!agency||agency.city_key!==cityKey(city))throw fail(400,'Ville non configurée : ajoutez son agence / hub avant de créer le colis');
   if(merchantId&&!stmt('SELECT 1 FROM merchants WHERE id=? AND company_id=?',merchantId,user.company_id))throw fail(400,'Marchand invalide');
   if(driverId&&!stmt("SELECT 1 FROM users WHERE id=? AND company_id=? AND role='DRIVER' AND active=1",driverId,user.company_id))throw fail(400,'Livreur invalide');
@@ -199,7 +199,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
    const companyId=user.company_id;
    if(path==='/api/labels'||path.startsWith('/api/labels/'))return await labelsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,publicBase:sameOrigin});
    if(path.startsWith('/api/workflow/')){const result=await workflowRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});if(result===false)throw fail(404,'Route de workflow introuvable');return;}
-   if(path==='/api/cities'||path.startsWith('/api/agencies')||path.startsWith('/api/dispatches')||path.startsWith('/api/operations/')||/^\/api\/shipments\/[a-f0-9-]{36}\/preparation$/.test(path))return await logisticsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json});
+   if(path==='/api/cities'||path.startsWith('/api/agencies')||path.startsWith('/api/dispatches')||path.startsWith('/api/operations/')||/^\/api\/shipments\/[a-f0-9-]{36}\/(?:preparation|route-agency)$/.test(path))return await logisticsRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json});
    if(path.startsWith('/api/merchant/')||path.startsWith('/api/finance/merchant-')){
     return await merchantRoute({path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json,createShipment});
    }
