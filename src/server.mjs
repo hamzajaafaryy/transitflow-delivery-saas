@@ -105,7 +105,7 @@ export function buildServer({db=openDb(':memory:'),sessionSecret=process.env.SES
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   try{
-   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.8.0'});
+   if(method==='GET'&&path==='/api/health')return send(res,200,{ok:true,service:'transitflow-delivery',version:'0.10.0'});
    if(method==='GET'&&path==='/api/auth/setup'){const company=stmt('SELECT name FROM company WHERE singleton=1');return send(res,200,{setupRequired:!company,companyName:company?.name||null});}
    if(method==='GET'&&mregex(path,/^\/api\/tracking\/([a-zA-Z0-9_-]{4,64})$/)){
     const tracking=decodeURIComponent(path.split('/').at(-1));
