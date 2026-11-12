@@ -66,7 +66,7 @@ function event(ctx,shipment,status,note,source='WAREHOUSE'){
 
 export async function logisticsRoute(ctx){
  const {path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json}=ctx;
- if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all('SELECT city FROM agencies WHERE company_id=? ORDER BY city',companyId).map(x=>x.city)});
+ if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all('SELECT MIN(city) AS city FROM agencies WHERE company_id=? GROUP BY city_key ORDER BY city COLLATE NOCASE',companyId).map(x=>x.city)});
  operations(user);
  if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all("SELECT a.id,a.name,a.city,a.kind,a.operator_name,a.contact,a.fee_centimes,a.created_at,(SELECT COUNT(*) FROM shipments s WHERE s.company_id=a.company_id AND s.agency_id=a.id AND s.status='PICKED_UP' AND s.ramassed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dispatch_items i WHERE i.company_id=s.company_id AND i.shipment_id=s.id)) AS ready_count FROM agencies a WHERE a.company_id=?"+(agencyScoped(user)?' AND a.id=?':'')+' ORDER BY a.city',...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
  if(method==='POST'&&path==='/api/agencies'){
@@ -97,6 +97,28 @@ export async function logisticsRoute(ctx){
    for(const [key,value] of Object.entries(data.map)){const normalized=clean(key,70).toUpperCase().replace(/[\s-]+/g,'_');if(!/^[A-ZÀ-Ÿ0-9_]{1,70}$/.test(normalized)||!Object.hasOwn(STATUS_LABELS,value))throw bad(400,'Mapping invalide');mapping[normalized]=value;}
    tx(()=>{run('UPDATE agencies SET status_map=? WHERE id=? AND company_id=?',JSON.stringify(mapping),agency.id,companyId);audit(companyId,user.id,'AGENCY_STATUS_MAP','agency',agency.id);});return send(res,200,{ok:true,mapping});
   }
+ }
+ if(method==='POST'&&/^\/api\/shipments\/[a-f0-9-]{36}\/route-agency$/.test(path)){
+  requirePermission(user,'dispatch');if(agencyScoped(user))throw bad(403,'Le routage des partenaires est réservé à l’exploitation centrale');
+  const shipmentId=path.split('/')[3],data=await json(req),reason=clean(data.reason,500);
+  if(reason.length<5)throw bad(400,'Un motif de réaffectation détaillé est requis');
+  const result=tx(()=>{
+   const shipment=stmt('SELECT * FROM shipments WHERE id=? AND company_id=?',shipmentId,companyId);
+   if(!shipment)throw bad(404,'Colis introuvable');
+   const target=stmt('SELECT * FROM agencies WHERE id=? AND company_id=?',data.agencyId,companyId);
+   if(!target)throw bad(404,'Agence ou partenaire introuvable');
+   if(target.city_key!==cityKey(shipment.city))throw bad(409,'Le partenaire doit couvrir la ville exacte du destinataire');
+   if(target.id===shipment.agency_id)throw bad(409,'Ce colis est déjà affecté à cette agence');
+   if(!['CREATED','AWAITING_PICKUP','COLLECTED','ASSIGNED_AGENCY','EXPORTED','PICKED_UP'].includes(shipment.status)||!['MERCHANT','WAREHOUSE'].includes(shipment.custody_type))throw bad(409,'Réaffectation impossible après le départ physique vers une agence ou un livreur');
+   if(stmt("SELECT 1 FROM dispatch_items i JOIN dispatches d ON d.id=i.dispatch_id AND d.company_id=i.company_id WHERE i.company_id=? AND i.shipment_id=? AND d.state IN ('OPEN','CLOSED','SHIPPED')",companyId,shipment.id))throw bad(409,'Le colis appartient déjà à un container actif ou expédié');
+   if(stmt('SELECT 1 FROM delivery_route_items WHERE company_id=? AND shipment_id=? AND active=1',companyId,shipment.id))throw bad(409,'Retirez le colis de sa tournée avant de changer son partenaire');
+   if(stmt("SELECT 1 FROM parcel_returns WHERE company_id=? AND shipment_id=? AND active=1",companyId,shipment.id))throw bad(409,'Un retour actif bloque le changement de partenaire');
+   const previous=stmt('SELECT name FROM agencies WHERE id=? AND company_id=?',shipment.agency_id,companyId);
+   run('UPDATE shipments SET agency_id=?,agency_fee_centimes=?,pending_agency_update=0,updated_at=? WHERE id=? AND company_id=?',target.id,target.fee_centimes,now(),shipment.id,companyId);
+   run('INSERT INTO shipment_events(id,company_id,shipment_id,status,source,note,actor_id,created_at) VALUES(?,?,?,?,?,?,?,?)',id(),companyId,shipment.id,shipment.status,'ROUTING',clean('Réaffectation '+(previous?.name||'')+' → '+target.name+' · '+reason,500),user.id,now());
+   audit(companyId,user.id,'SHIPMENT_AGENCY_ROUTED','shipment',shipment.id,{fromAgencyId:shipment.agency_id,toAgencyId:target.id,reason,feeCentimes:target.fee_centimes});
+   return {ok:true,shipmentId:shipment.id,tracking:shipment.tracking,agency:{id:target.id,name:target.name,city:target.city,kind:target.kind,feeCentimes:target.fee_centimes}};
+  });return send(res,200,result);
  }
  if(method==='GET'&&path==='/api/operations/queue'){
   requirePermission(user,'warehouse');
