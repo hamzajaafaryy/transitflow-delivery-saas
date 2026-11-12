@@ -1,9 +1,10 @@
 # TransitFlow — exploitation d’une société de livraison au Maroc
 
-Version 0.9 : une société, ses clients marchands, son warehouse et son réseau d’agences/hubs par ville. Les partenaires locaux sont des agences de destination ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
+Version 0.10 : une société, ses clients marchands, son warehouse et plusieurs agences/partenaires possibles dans une même ville. Le routage reste manuel et contrôlé par l’exploitation ; aucune inscription de sociétés indépendantes ni abonnement SaaS.
 
 ## Tickets, scans et retours par ville v0.9
 
+- **Routage multi-partenaires** : plusieurs agences/hubs peuvent couvrir la même ville. Une commande choisit par défaut l’agence interne, sinon le partenaire le plus ancien ; l’exploitation peut réaffecter manuellement un colis à un autre partenaire de la même ville avant le départ physique. Le tarif agence est figé sur le colis et chaque changement est audité.
 - **Tickets · ramassage** : colis externes du marchand, sans prélèvement warehouse. **Tickets · stock** : commandes préparées depuis ses produits. Chaque lot contient un seul marchand et une seule source ; un ticket Code128/QR par page **100 × 100 mm**. Sélection, impression groupée et réimpression sont disponibles dans les comptes marchands et à l’exploitation.
 - La préparation d’un lot est une action enregistrée : les nouvelles commandes passent de « À imprimer » à **En attente de ramassage**. Ouvrir un aperçu en GET ne change rien. Une réimpression ne remet jamais un colis en arrière. La confirmation de l’imprimante physique reste celle de l’opérateur.
 - Scan ramassage / préparation → **Ramassé** ; scan dans le bon d’envoi de la ville → **Envoi expédié** ; scan arrivée → **Reçu par ville** ; scan individuel de remise au livreur → **Mise en distribution**. La fermeture et le départ physique des containers restent enregistrés séparément. Une tournée ne démarre qu’après scan de tous ses colis.
