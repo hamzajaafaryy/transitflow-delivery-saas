@@ -74,7 +74,7 @@ export async function logisticsRoute(ctx){
   if(!name||city.length<2||!['INTERNAL','PARTNER'].includes(kind))throw bad(400,'Nom, ville et type d’agence requis');
   const agencyId=id(),key=makeKey();
   try{tx(()=>{run(`INSERT INTO agencies(id,company_id,name,cities,contact,fee_centimes,api_key_hash,created_at,city,city_key,kind,operator_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,agencyId,companyId,name,JSON.stringify([city]),clean(data.contact,120),fee,hashKey(key),now(),city,cityKey(city),kind,clean(data.operatorName,120));audit(companyId,user.id,'AGENCY_CREATED','agency',agencyId,{name,city,kind,fee});});}
-  catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Cette ville ou ce nom d’agence existe déjà');throw e;}
+  catch(e){if(String(e).includes('UNIQUE'))throw bad(409,'Ce nom d’agence existe déjà');throw e;}
   return send(res,201,{id:agencyId,name,city,feeCentimes:fee,apiKey:key});
  }
  const agencyMatch=path.match(/^\/api\/agencies\/([a-f0-9-]{36})(?:\/(rotate-key|status-map))?$/);
