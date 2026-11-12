@@ -27,7 +27,7 @@ Les routes sont préfixées `/api`. Les requêtes navigateur utilisent le cookie
 | POST | `/agencies/:id/rotate-key` | Admin ; révoque immédiatement l’ancienne clé |
 | POST | `/agencies/:id/status-map` | Admin : `{map:{STATUT_EXTERNE:"IN_TRANSIT"}}` |
 
-Une seule agence par ville normalisée (casse, espaces et accents). Exemple : Tanger, coût agence 20 MAD. Le coût agence et le tarif marchand sont indépendants.
+Plusieurs agences et partenaires peuvent couvrir la même ville normalisée. Chaque colis conserve une seule agence de destination à un instant donné ; la création choisit par défaut l’agence interne, sinon le partenaire le plus ancien. L’exploitation peut réaffecter manuellement un colis au même city_key avant son départ physique. Exemple : Tanger avec plusieurs partenaires et des frais distincts. Le coût agence est figé sur le colis et le tarif marchand reste indépendant.
 
 ## Commandes et préparation
 
@@ -52,6 +52,7 @@ Une seule agence par ville normalisée (casse, espaces et accents). Exemple : Ta
 | PATCH | `/shipments/:id` | Corrections avec reason ; COD admin uniquement ; ville non modifiable après ramassage ; contenu d’un container ouvert/fermé protégé |
 | POST | `/shipments/:id/notes` | Remarque opérations/admin |
 | POST | `/shipments/assign` | `{shipmentId,driverId?}` ; aucune progression automatique de statut |
+| POST | `/shipments/:id/route-agency` | Exploitation/dispatcher : `{agencyId,reason}` ; réaffectation manuelle vers une agence/partenaire de la même ville, avant départ physique ; tarif agence mis à jour et événement/audit conservés |
 | POST | `/shipments/:id/status` | Annulation seulement ; mouvements physiques par les workflows dédiés |
 | GET | `/shipments/:id/ticket` | HTML privé 100 × 100 mm, Code128 et QR |
 | GET | `/shipments/:id/preparation` | Opérations/admin : bon stock avec SKU/quantités/emplacements, ou bon livraison externe |
