@@ -62,7 +62,8 @@ test('controlled corrections, admin COD edits, internal notes and CSRF protectio
   assert.equal((await t.request('/api/merchants',{method:'POST',csrf:false,data:{name:'Blocked'}})).status,403);
   assert.equal((await t.request('/api/merchants',{method:'POST',origin:'https://untrusted.example',data:{name:'Blocked'}})).status,403);
   assert.equal((await t.agency('Fès')).city,'Fès');
-  assert.equal((await t.request('/api/agencies',{method:'POST',data:{name:'Second Fes',city:' FES ',fee:20}})).status,409);
+  const secondFes=await t.request('/api/agencies',{method:'POST',data:{name:'Second Fes',city:' FES ',fee:20}});assert.equal(secondFes.status,201,'a second partner may serve the same normalized city');
+  const configuredCities=await t.request('/api/cities');assert.equal(configuredCities.value.cities.filter(x=>x.toLowerCase()==='fès').length,1,'city choices stay deduplicated');
   assert.equal((await t.order({tracking:a.value.id})).status,201);assert.equal((await t.pickup(a.value.id)).status,409,'ambiguous ID/tracking must not scan the wrong parcel');
  }finally{await t.stop();}
 });
