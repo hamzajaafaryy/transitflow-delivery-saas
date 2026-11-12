@@ -186,7 +186,10 @@ CREATE INDEX IF NOT EXISTS merchant_statements_lookup ON merchant_statements(com
       }
     }
   }
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS agency_city_unique ON agencies(company_id,city_key)');
+  // A city may be served by the internal hub and several external delivery partners.
+  // Keep city lookup indexed, but do not enforce one agency per city.
+  db.exec('DROP INDEX IF EXISTS agency_city_unique');
+  db.exec('CREATE INDEX IF NOT EXISTS agencies_company_city_lookup ON agencies(company_id,city_key,kind,created_at)');
   const newSource=addColumn(db,'shipments','order_source',"TEXT NOT NULL DEFAULT 'EXTERNAL' CHECK(order_source IN ('EXTERNAL','STOCK'))");
   addColumn(db,'shipments','ramassed_at','TEXT');
   addColumn(db,'shipments','agency_fee_centimes','INTEGER NOT NULL DEFAULT 0 CHECK(agency_fee_centimes>=0)');

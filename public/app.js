@@ -86,7 +86,7 @@ function shipmentMenuContent(s){
  ${state.me.user.role!=='FINANCE'?`${item('print-ticket','▣ Imprimer Ticket')}${item('print-ticket','⇩ Imprimer E-Ticket / PDF')}`:''}
  ${op?item('prep-document',s.order_source==='STOCK'?'▥ Bon stock':'▤ Bon de livraison'):''}
  ${op?item('add-note','✦ Ajouter une remarque'):''}
- ${op?item('assign','↗ Affecter'):''}${can('claims.manage')||can('routes.manage')?item('wf-contact','☎ Contact / report'):''}${can('routes.manage')?(s.status==='LOST'?item('wf-recover','✓ Colis retrouvé'):item('wf-incident','⚑ Perte / dommage')):''}</div>`;
+ ${op?item('assign','↗ Affecter'):''}${can('dispatch')&&!done?item('route-agency','⇄ Changer agence / partenaire'):''}${can('claims.manage')||can('routes.manage')?item('wf-contact','☎ Contact / report'):''}${can('routes.manage')?(s.status==='LOST'?item('wf-recover','✓ Colis retrouvé'):item('wf-incident','⚑ Perte / dommage')):''}</div>`;
 }
 function shipmentTable(rows,selectable=false){
  if(!rows.length)return emptyState('Aucun colis trouvé','Modifiez vos filtres ou enregistrez une nouvelle commande.','shipments');
@@ -192,6 +192,15 @@ async function action(a,el){
  if(a==='new-merchant'){
   const m=modal('Nouveau marchand',`<form class="form">${field('Nom du marchand','name',{required:true})}${field('Téléphone','phone')}<button class="btn" type="submit">Créer le marchand</button></form>`);
   m.querySelector('form').onsubmit=async e=>{e.preventDefault();try{await api('/merchants',{method:'POST',data:formData(e.target)});m.remove();toast('Marchand créé');await refresh();}catch(err){toast(err.message,true);}};return;
+ }
+ if(a==='route-agency'){
+  const sh=state.shipments.find(x=>x.id===el.dataset.id);if(!sh)return;
+  const normalize=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
+  const choices=state.agencies.filter(x=>normalize(x.city)===normalize(sh.city)&&x.id!==sh.agency_id);
+  if(!choices.length){toast('Aucun partenaire supplémentaire configuré pour cette ville',true);return;}
+  const m=modal('Réaffecter le colis '+sh.tracking,'<form class="form"><p class="note">Destination : '+esc(sh.city)+'. La réaffectation est autorisée uniquement avant le départ physique. Le tarif du partenaire sera enregistré sur le colis.</p>'+field('Agence / partenaire','agencyId',{options:choices.map(x=>({value:x.id,label:x.name+' · '+(x.kind==='INTERNAL'?'Interne':'Partenaire')+' · '+money(x.fee_centimes)+' / colis'}))})+field('Motif obligatoire','reason',{required:true,placeholder:'Ex. capacité disponible / couverture locale'})+'<button class="btn" type="submit">Confirmer la réaffectation</button></form>');
+  m.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button[type="submit"]');button.disabled=true;try{await api('/shipments/'+sh.id+'/route-agency',{method:'POST',data:formData(e.target)});m.remove();toast('Partenaire de livraison mis à jour');await refresh();}catch(err){toast(err.message,true);button.disabled=false;}};
+  return;
  }
  if(a==='assign'){
   const sh=state.shipments.find(x=>x.id===el.dataset.id);if(!sh)return;
