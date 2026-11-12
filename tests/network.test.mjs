@@ -143,3 +143,26 @@ test('partial stock return requests cannot silently close the missing units thro
   assert.equal((await wf(t,path+'/scan',{scan:s.tracking})).status,409);assert.equal((await get(t,path)).value.summary.scanned,0);assert.equal(row(t,s).status,'CANCELLED');assert.equal(t.db.prepare('SELECT state FROM parcel_returns WHERE id=?').get(ret.value.id).state,'REQUESTED');assert.equal(units(t,pid),8);
  }finally{await t.stop();}
 });
+
+
+test('multiple delivery partners can serve one city and parcels can be manually rerouted before physical dispatch',async()=>{
+ const t=await start();try{
+  const second=await post(t,'/agencies',{name:'Tanger Express',city:'Tanger',kind:'PARTNER',operatorName:'Tanger Express',fee:35,contact:'0600000000'});
+  assert.equal(second.status,201,JSON.stringify(second.value));
+  const cityList=await t.request('/api/cities');assert.equal(cityList.value.cities.filter(x=>x.toLowerCase()==='tanger').length,1,'city picker must not duplicate a city');
+  const s=(await t.order({recipient:'Client partenaire'})).value;
+  assert.equal(s.agencyId,t.agencies.Tanger.id,'new orders should default to the configured internal hub or oldest partner');
+  assert.equal((await t.pickup(s.tracking)).status,200);
+  const routed=await post(t,'/shipments/'+s.id+'/route-agency',{agencyId:second.value.id,reason:'Capacité disponible chez le partenaire Tanger Express'});
+  assert.equal(routed.status,200,JSON.stringify(routed.value));
+  assert.equal(routed.value.agency.id,second.value.id);assert.equal(routed.value.agency.feeCentimes,3500);
+  const stored=row(t,s);assert.equal(stored.agency_id,second.value.id);assert.equal(stored.agency_fee_centimes,3500);
+  const event=t.db.prepare("SELECT source,note FROM shipment_events WHERE shipment_id=? AND source='ROUTING'").get(s.id);assert.ok(event?.note.includes('Capacité disponible'));
+  const wrongCity=await post(t,'/shipments/'+s.id+'/route-agency',{agencyId:t.agencies.Casablanca.id,reason:'Test wrong city'});assert.equal(wrongCity.status,409);
+  const dispatch=await post(t,'/dispatches',{agencyId:second.value.id,shipmentIds:[s.id]});assert.equal(dispatch.status,201,JSON.stringify(dispatch.value));
+  const path='/dispatches/'+dispatch.value.dispatch.id;
+  assert.equal((await post(t,path+'/scan',{scan:s.tracking})).status,200);
+  assert.equal((await post(t,path+'/close')).status,200);assert.equal((await post(t,path+'/ship')).status,200);
+  const afterDeparture=await post(t,'/shipments/'+s.id+'/route-agency',{agencyId:t.agencies.Tanger.id,reason:'Too late'});assert.equal(afterDeparture.status,409);
+ }finally{await t.stop();}
+});
