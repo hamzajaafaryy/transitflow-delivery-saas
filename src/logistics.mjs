@@ -66,7 +66,7 @@ function event(ctx,shipment,status,note,source='WAREHOUSE'){
 
 export async function logisticsRoute(ctx){
  const {path,method,url,req,res,user,companyId,stmt,all,run,tx,audit,send,json}=ctx;
- if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all('SELECT (SELECT b.city FROM agencies b WHERE b.company_id=a.company_id AND b.city_key=a.city_key ORDER BY CASE b.kind WHEN 'INTERNAL' THEN 0 ELSE 1 END,b.created_at,b.id LIMIT 1) AS city FROM agencies a WHERE a.company_id=? GROUP BY a.city_key ORDER BY city COLLATE NOCASE',companyId).map(x=>x.city)});
+ if(method==='GET'&&path==='/api/cities')return send(res,200,{cities:all("SELECT (SELECT b.city FROM agencies b WHERE b.company_id=a.company_id AND b.city_key=a.city_key ORDER BY CASE b.kind WHEN 'INTERNAL' THEN 0 ELSE 1 END,b.created_at,b.id LIMIT 1) AS city FROM agencies a WHERE a.company_id=? GROUP BY a.city_key ORDER BY city COLLATE NOCASE",companyId).map(x=>x.city)});
  operations(user);
  if(method==='GET'&&path==='/api/agencies')return send(res,200,{agencies:all("SELECT a.id,a.name,a.city,a.kind,a.operator_name,a.contact,a.fee_centimes,a.created_at,(SELECT COUNT(*) FROM shipments s WHERE s.company_id=a.company_id AND s.agency_id=a.id AND s.status='PICKED_UP' AND s.ramassed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dispatch_items i WHERE i.company_id=s.company_id AND i.shipment_id=s.id)) AS ready_count FROM agencies a WHERE a.company_id=?"+(agencyScoped(user)?' AND a.id=?':'')+' ORDER BY a.city',...agencyScoped(user)?[companyId,user.agency_id||'NO_AGENCY']:[companyId])});
  if(method==='POST'&&path==='/api/agencies'){
